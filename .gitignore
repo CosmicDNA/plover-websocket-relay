@@ -167,4 +167,4 @@ dist
 !.envrc
 .wrangler/
 
-*.log
+session.json

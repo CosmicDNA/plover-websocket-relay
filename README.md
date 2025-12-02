@@ -12,7 +12,7 @@ Before touching your existing code, verify the core logic works using command li
 1. Create a Session (Simulate Plover Plugin):
 
 ```bash
-curl -s -X POST "$WORKER_URL/session/initiate" | tee initiate-session.log | jq
+curl -s -X POST "$WORKER_URL/session/initiate" | tee session.log | jq
 ```
 Expected Response: A JSON object with a sessionId and a tabletConnectionUrl.
 
@@ -31,7 +31,7 @@ Use a WebSocket client like wscat to connect as the PC.
 
 # Format: wss://plover-websocket-relay.cosmicdna.workers.dev/session/<SESSION_ID>/connect
 
-wscat -c "wss://$BASE_WORKER_URL/session/`cat initiate-session.log | jq -r .sessionId`/connect"
+wscat -c "wss://$BASE_WORKER_URL/session/`jq -r .sessionId session.json`/connect"
 ```
 
 You should see a successful connection. The Worker logs will show PC connected to session.
@@ -40,7 +40,7 @@ You should see a successful connection. The Worker logs will show PC connected t
 In a second terminal, use the exact tabletConnectionUrl from Step 1.
 
 ```bash
-wscat -c $(cat initiate-session.log | jq -r .tabletConnectionUrl)
+wscat -c `jq -r .tabletConnectionUrl session.json`
 ```
 Expected Result:
 
