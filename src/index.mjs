@@ -19,11 +19,16 @@ app.post('/session/initiate', async (c) => {
   // Initialize the session with the secret token
   await sessionStub.initialize(secretToken)
 
+  const workerUrl = new URL(c.req.url);
+  // Replace 'http' with 'ws' and ensure it's the worker's hostname
+  const wssBaseUrl = `wss://${workerUrl.hostname}`;
+  const tabletConnectionUrl = `${wssBaseUrl}/session/${sessionId}/join?token=${secretToken}`;
+
   // Return the info the PC plugin needs
   return c.json({
     sessionId,
     // The URL for the tablet to connect (will be encoded in QR code)
-    tabletConnectionUrl: `${new URL(c.req.url).origin}/session/${sessionId}/join?token=${secretToken}`
+    tabletConnectionUrl
   })
 })
 
