@@ -1,23 +1,38 @@
 import { DurableObject } from 'cloudflare:workers'
 
+/**
+ * @typedef {object} Env
+ * @property {DurableObjectNamespace<RelaySession>} RELAY_SESSION
+ */
+
 export class RelaySession extends DurableObject {
+  /** @type {DurableObjectState<Env>} */
+  ctx
+
+  /**
+   * @param {DurableObjectState<Env>} ctx
+   * @param {Env} env
+   */
   constructor(ctx, env) {
     super(ctx, env)
     this.ctx = ctx
-    this.secretToken = null
     this.sessionAlarmTime = 5 * 60 * 1000
     this.keepAliveInterval = 30 * 1000
     console.log(`[DO ${this.ctx.id}] Constructor called`)
   }
 
   async initialize(secretToken) {
-    this.secretToken = secretToken
     await this.ctx.storage.put('secretToken', secretToken)
     console.log(`[DO ${this.ctx.id}] initialize() called`)
     await this.ctx.storage.setAlarm(Date.now() + this.sessionAlarmTime)
     console.log(`[DO ${this.ctx.id}] Session expiry alarm set`)
   }
 
+  /**
+   *
+   * @param {Request} request
+   * @returns
+   */
   async fetch(request) {
     // Handle POST initialization
     if (request.method === 'POST') {
@@ -35,8 +50,7 @@ export class RelaySession extends DurableObject {
 
     // Get client type from URL path
     const url = new URL(request.url)
-    const path = url.pathname
-    const pathEnd = path.split('/').at(-1)
+    const pathEnd = url.pathname.split('/').at(-1)
 
     let clientType = 'unknown'
     switch (pathEnd) {
@@ -151,15 +165,6 @@ export class RelaySession extends DurableObject {
 
     } catch (e) {
       console.error(`[DO ${this.ctx.id}] Invalid JSON from ${clientType}:`, message)
-
-      // Echo back test messages
-      if (message === 'Hi' || message === 'Bye') {
-        ws.send(JSON.stringify({
-          type: 'echo',
-          from: clientType,
-          message: `Got: ${message}`
-        }))
-      }
     }
   }
 
