@@ -90,27 +90,35 @@ export class RelaySession extends DurableObject {
     })
   }
 
-  async webSocketMessage(ws, message) {
-    // Determine clientType by checking which tag this WebSocket has
-    let clientType = 'unknown'
+  /**
+   *
+   * @param {WebSocket} ws
+   * @param {String} tag
+   */
+  isSocketOfGivenTag(ws, tag) {
+    return this.ctx
+      .getWebSockets(tag)
+      .some(socket => socket === ws)
+  }
 
-    // Method 1: Try to get from attachment first
-    const attachment = ws.deserializeAttachment()
-    if (attachment && attachment[0]) {
-      clientType = attachment[0]
-    } else {
-      // Method 2: Check all possible tags using getWebSockets()
-      const tags = ['pc', 'tablet']
-      for (const tag of tags) {
-        const sockets = this.ctx.getWebSockets(tag)
-        // Check if this WebSocket is in the list for this tag
-        const found = sockets.some(socket => socket === ws)
-        if (found) {
-          clientType = tag
-          break
-        }
+  /**
+   *
+   * @param {webSocket} ws
+   * @returns
+   */
+  getWsTag(ws) {
+    const tags = ['pc', 'tablet']
+    for (const tag of tags) {
+      if (this.isSocketOfGivenTag(ws, tag)) {
+        return tag
       }
     }
+    return 'unknown'
+  }
+
+  async webSocketMessage(ws, message) {
+    // Determine clientType by checking which tag this WebSocket has
+    let clientType = this.getWsTag(ws)
 
     console.log(`[DO ${this.ctx.id}] Message from ${clientType}: ${message}`)
 
@@ -156,17 +164,25 @@ export class RelaySession extends DurableObject {
   }
 
   async webSocketClose(ws, code, reason, wasClean) {
-    const attachment = ws.deserializeAttachment()
-    const clientType = attachment && attachment[0] ? attachment[0] : 'unknown'
+    // Method 1: Check all active WebSocket tags to identify this one
+    const clientType = this.getWsTag(ws)
 
-    console.log(`[DO ${this.ctx.id}] ${clientType} disconnected: ${reason}`)
+    console.log(`[DO ${this.ctx.id}] ${clientType} disconnected: ${reason} (code: ${code})`)
 
-    // If one client disconnects, close the other
-    const otherClientType = clientType === 'pc' ? 'tablet' : 'pc'
-    const otherSockets = this.ctx.getWebSockets(otherClientType)
-    if (otherSockets.length > 0) {
-      otherSockets[0].close(1000, `${clientType} disconnected`)
+    // If we successfully identified which client disconnected, close the other
+    if (clientType !== 'unknown') {
+      const otherClientType = clientType === 'pc' ? 'tablet' : 'pc'
+      const otherSockets = this.ctx.getWebSockets(otherClientType)
+
+      if (otherSockets.length > 0) {
+        console.log(`[DO ${this.ctx.id}] Also closing ${otherClientType} because ${clientType} disconnected`)
+        otherSockets[0].close(1000, `${clientType} disconnected`)
+      }
     }
+
+    // Debug: Log current socket counts
+    const allSockets = this.ctx.getWebSockets()
+    console.log(`[DO ${this.ctx.id}] Remaining sockets: ${allSockets.length} total`)
   }
 
   async alarm() {
