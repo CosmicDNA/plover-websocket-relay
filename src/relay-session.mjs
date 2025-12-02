@@ -4,8 +4,6 @@ export class RelaySession extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env)
     this.ctx = ctx
-    this.pcSocket = null
-    this.tabletSocket = null
     this.secretToken = null
     this.sessionAlarmTime = 5 * 60 * 1000
     this.keepAliveInterval = 30 * 1000
@@ -28,21 +26,6 @@ export class RelaySession extends DurableObject {
       return new Response('Initialization successful', { status: 200 })
     }
 
-    // Get client type from URL path
-    const url = new URL(request.url)
-    const path = url.pathname
-    let clientType = 'unknown'
-    let token = null
-
-    if (path.endsWith('/connect')) {
-      clientType = 'pc'
-    } else if (path.endsWith('/join')) {
-      clientType = 'tablet'
-      token = url.searchParams.get('token')
-    }
-
-    console.log(`[DO ${this.ctx.id}] WebSocket upgrade for ${clientType}`)
-
     // WebSocket upgrade
     if (request.headers.get('Upgrade') !== 'websocket') {
       return new Response('Expected WebSocket', { status: 426 })
@@ -50,33 +33,38 @@ export class RelaySession extends DurableObject {
 
     const [client, server] = Object.values(new WebSocketPair())
 
-    // Load secret token for validation
-    const storedToken = await this.ctx.storage.get('secretToken')
+    // Get client type from URL path
+    const url = new URL(request.url)
+    const path = url.pathname
+    const pathEnd = path.split('/').at(-1)
 
-    // Tablet token validation
-    if (clientType === 'tablet') {
-      if (token !== storedToken) {
-        server.close(1008, 'Invalid token')
-        return new Response('Invalid token', { status: 403 })
-      }
-      // Tablet connected - cancel expiry alarm
-      await this.ctx.storage.deleteAlarm()
+    let clientType = 'unknown'
+    switch (pathEnd) {
+      case "connect":
+        clientType = 'pc'
+        break
+      case "join":
+        const token = url.searchParams.get('token')
+        const storedToken = await this.ctx.storage.get('secretToken')
+        if (token !== storedToken) {
+          server.close(1008, 'Invalid token')
+          return new Response('Invalid token', { status: 403 })
+        }
+        clientType = 'tablet'
+        // Tablet connected - cancel expiry alarm
+        await this.ctx.storage.deleteAlarm()
+        // Set keep-alive alarm
+        await this.ctx.storage.setAlarm(Date.now() + this.keepAliveInterval)
+        break
     }
 
-    // Store clientType in a Map that persists across this instance
-    // This is the key fix - we store the WebSocket reference immediately
-    if (clientType === 'pc') {
-      this.pcSocket = server
-    } else if (clientType === 'tablet') {
-      this.tabletSocket = server
-    }
-
-    // Store the clientType in the Durable Object's state for this session
-    // This will help if the object hibernates
-    await this.ctx.storage.put(`active_${clientType}`, true)
-
-    // Accept WebSocket WITH clientType in attachment (for immediate use)
+    // In the fetch method, after acceptWebSocket:
+    console.log(`[DO ${this.ctx.id}] Accepted WebSocket with tag: [${clientType}]`)
     this.ctx.acceptWebSocket(server, [clientType])
+
+    // Verify the tag was set
+    const taggedSockets = this.ctx.getWebSockets(clientType)
+    console.log(`[DO ${this.ctx.id}] Now has ${taggedSockets.length} ${clientType} socket(s)`)
 
     // Send immediate welcome message
     server.send(JSON.stringify({
@@ -85,6 +73,17 @@ export class RelaySession extends DurableObject {
       clientType
     }))
 
+    // If tablet just connected, notify PC
+    if (clientType === 'tablet') {
+      const pcSockets = this.ctx.getWebSockets('pc')
+      if (pcSockets.length > 0) {
+        pcSockets[0].send(JSON.stringify({
+          type: 'tablet_connected',
+          timestamp: Date.now()
+        }))
+      }
+    }
+
     return new Response(null, {
       status: 101,
       webSocket: client,
@@ -92,92 +91,98 @@ export class RelaySession extends DurableObject {
   }
 
   async webSocketMessage(ws, message) {
-    // Method 1: Check if this WebSocket matches our stored references
+    // Determine clientType by checking which tag this WebSocket has
     let clientType = 'unknown'
 
-    if (ws === this.pcSocket) {
-      clientType = 'pc'
-    } else if (ws === this.tabletSocket) {
-      clientType = 'tablet'
+    // Method 1: Try to get from attachment first
+    const attachment = ws.deserializeAttachment()
+    if (attachment && attachment[0]) {
+      clientType = attachment[0]
     } else {
-      // Method 2: Try to get from attachment (might work on first message)
-      const attachment = ws.deserializeAttachment()
-      if (attachment && attachment[0]) {
-        clientType = attachment[0]
-        // Update our references
-        if (clientType === 'pc') {
-          this.pcSocket = ws
-        } else if (clientType === 'tablet') {
-          this.tabletSocket = ws
-        }
-      } else {
-        // Method 3: Check storage to see which client is active
-        const isPcActive = await this.ctx.storage.get('active_pc')
-        const isTabletActive = await this.ctx.storage.get('active_tablet')
-
-        // Determine based on active connections (PC connects first)
-        if (isPcActive && !this.pcSocket) {
-          clientType = 'pc'
-          this.pcSocket = ws
-        } else if (isTabletActive && !this.tabletSocket) {
-          clientType = 'tablet'
-          this.tabletSocket = ws
+      // Method 2: Check all possible tags using getWebSockets()
+      const tags = ['pc', 'tablet']
+      for (const tag of tags) {
+        const sockets = this.ctx.getWebSockets(tag)
+        // Check if this WebSocket is in the list for this tag
+        const found = sockets.some(socket => socket === ws)
+        if (found) {
+          clientType = tag
+          break
         }
       }
     }
 
     console.log(`[DO ${this.ctx.id}] Message from ${clientType}: ${message}`)
 
-    // Handle test messages with correct clientType
-    if (message === 'Hi' || message === 'Bye') {
-      ws.send(JSON.stringify({
-        type: 'echo',
-        from: clientType,  // Now shows 'pc' or 'tablet'
-        message: `Got: ${message}`
-      }))
-      return
-    }
-
-    // For real JSON messages, you'd parse and relay here
     try {
+      // Parse JSON message
       const data = JSON.parse(message)
       console.log(`[DO ${this.ctx.id}] JSON from ${clientType}:`, data)
 
-      // Relay to the other client
-      const target = clientType === 'pc' ? this.tabletSocket : this.pcSocket
-      if (target && target.readyState === 1) {
-        target.send(JSON.stringify({
-          ...data,
-          relayedFrom: clientType,
-          timestamp: Date.now()
+      // Handle special commands
+      if (data.type === 'close' && clientType === 'tablet') {
+        console.log(`[DO ${this.ctx.id}] Tablet requested closure`)
+        const allSockets = this.ctx.getWebSockets()
+        allSockets.forEach(socket => {
+          socket.close(1000, 'Closed by tablet')
+        })
+        return
+      }
+
+      // Relay to the other client using WebSocket tags
+      const otherClientType = clientType === 'pc' ? 'tablet' : 'pc'
+      const otherSockets = this.ctx.getWebSockets(otherClientType)
+
+      if (otherSockets.length > 0) {
+        // Send the original JSON data (not wrapped)
+        otherSockets[0].send(JSON.stringify(data))
+        console.log(`[DO ${this.ctx.id}] Relayed to ${otherClientType}`)
+      } else {
+        console.log(`[DO ${this.ctx.id}] No active ${otherClientType} to relay to`)
+      }
+
+    } catch (e) {
+      console.error(`[DO ${this.ctx.id}] Invalid JSON from ${clientType}:`, message)
+
+      // Echo back test messages
+      if (message === 'Hi' || message === 'Bye') {
+        ws.send(JSON.stringify({
+          type: 'echo',
+          from: clientType,
+          message: `Got: ${message}`
         }))
       }
-    } catch (e) {
-      console.error(`[DO ${this.ctx.id}] Invalid JSON:`, message)
     }
   }
 
   async webSocketClose(ws, code, reason, wasClean) {
-    // Determine which client disconnected
-    let clientType = 'unknown'
-    if (ws === this.pcSocket) {
-      clientType = 'pc'
-      this.pcSocket = null
-      await this.ctx.storage.delete('active_pc')
-    } else if (ws === this.tabletSocket) {
-      clientType = 'tablet'
-      this.tabletSocket = null
-      await this.ctx.storage.delete('active_tablet')
-    }
+    const attachment = ws.deserializeAttachment()
+    const clientType = attachment && attachment[0] ? attachment[0] : 'unknown'
 
     console.log(`[DO ${this.ctx.id}] ${clientType} disconnected: ${reason}`)
+
+    // If one client disconnects, close the other
+    const otherClientType = clientType === 'pc' ? 'tablet' : 'pc'
+    const otherSockets = this.ctx.getWebSockets(otherClientType)
+    if (otherSockets.length > 0) {
+      otherSockets[0].close(1000, `${clientType} disconnected`)
+    }
   }
 
   async alarm() {
-    console.log(`[DO ${this.ctx.id}] Session expired - closing`)
-    // Clean up storage
-    await this.ctx.storage.delete('active_pc')
-    await this.ctx.storage.delete('active_tablet')
-    await this.ctx.storage.delete('secretToken')
+    console.log(`[DO ${this.ctx.id}] Alarm triggered`)
+
+    // Check if we have active WebSockets
+    const allSockets = this.ctx.getWebSockets()
+
+    if (allSockets.length > 0) {
+      // We have active connections - set next keep-alive
+      console.log(`[DO ${this.ctx.id}] Keep-alive: ${allSockets.length} active connections`)
+      await this.ctx.storage.setAlarm(Date.now() + this.keepAliveInterval)
+    } else {
+      // No active connections - session expired
+      console.log(`[DO ${this.ctx.id}] Session expired - cleaning up`)
+      await this.ctx.storage.delete('secretToken')
+    }
   }
 }
