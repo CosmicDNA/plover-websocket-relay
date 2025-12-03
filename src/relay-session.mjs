@@ -227,14 +227,23 @@ export class RelaySession extends DurableObject {
 
       // Handle special commands
       if (data.type === 'close' && clientType === deviceTags.TABLET) {
-        console.debug(`[DO ${this.ctx.id}] Tablet requested closure`)
+        console.debug(`[DO ${this.ctx.id}] Tablet requested closure. Closing all connections.`)
+        // Get all sockets currently in the session and close them to terminate the session.
         const allSockets = this.ctx.getWebSockets()
-        allSockets.forEach(socket => {
+        for (const socket of allSockets) {
           socket.close(WsStatusCodes.NORMAL_CLOSURE, labels.CLOSED_BY_TABLET)
-        })
+        }
         return
       }
 
+      // Handle keep-alive pings
+      if (data.type === 'ping') {
+        console.debug(`[DO ${this.ctx.id}] Received ping from ${clientType}.`)
+        // Respond with a pong to let the client know the connection is active.
+        ws.send(JSON.stringify({ type: 'pong' }))
+        console.debug(`[DO ${this.ctx.id}] Sent pong to ${clientType}.`)
+        return
+      }
       this.callToComplementary(clientType,
         (socket, otherClientType) => {
           socket.send(JSON.stringify(data))
