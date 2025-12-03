@@ -56,17 +56,3 @@ It should appear in the tablet terminal.
 Send {"type": "close"} from the tablet terminal. Both WebSocket connections should close.
 
 If all steps pass, your relay core is functioning perfectly.
-
-
-```bash
-curl -s -X POST "$WORKER_URL/session/initiate" | jq
-```
-
-You should then see a similar output to:
-
-```json
-{
-  "sessionId": "2c16b810-6977-4806-a067-31465be1d6bc",
-  "tabletConnectionUrl": "https://your-worker-name.your subdomain-name.workers.dev/session/2c16b810-6977-4806-a067-31465be1d6bc/join?token=06b7f9fa67e726ab699d83cf339cb68b7714b5a91f5239eab4ffb3fc161bb9b7"
-}
-```
