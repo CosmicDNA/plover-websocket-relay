@@ -1,8 +1,8 @@
+import hono from '@hono/eslint-config'
+import tsParser from '@typescript-eslint/parser'
+import simpleImportSort from 'eslint-plugin-simple-import-sort'
 import globalsImport from 'globals'
 import neostandard from 'neostandard'
-import hono from '@hono/eslint-config'
-
-import tsParser from '@typescript-eslint/parser'
 
 // Call neostandard() to get its config array.
 const neostandardConfigs = neostandard()
@@ -34,6 +34,15 @@ const honoTypeScriptConfigs = hono.map(config => ({
 }))
 
 export default [
+  // 1. Apply import sorting to all relevant files
+  {
+    plugins: { 'simple-import-sort': simpleImportSort },
+    rules: {
+      'simple-import-sort/imports': 'error',
+      'simple-import-sort/exports': 'error'
+    }
+  },
+  // 2. Apply neostandard for JS files
   {
     files: ['**/*.js', '**/*.mjs', '**/*.cjs'],
     ...neostandardBaseConfig,

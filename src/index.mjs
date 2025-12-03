@@ -1,12 +1,18 @@
 import { Hono } from 'hono'
 import { logger } from 'hono/logger'
+import { getMimeType } from 'hono/utils/mime'
+
+import HttpMethods from '../node_modules/http-methods-constants/index'
+import protocols from './constants/protocols.mjs'
+import searchParams from './constants/search-params.mjs'
+import slugs from './constants/slugs.mjs'
 import { RelaySession } from './relay-session.mjs'
 
 const app = new Hono()
 app.use(logger())
 
 // 1. Endpoint for Plover (PC) to create a new session
-app.post('/session/initiate', async (c) => {
+app.post(`/${slugs.SESSION}/${slugs.INITIATE}`, async (c) => {
   const { RELAY_SESSION } = c.env
 
   const sessionId = crypto.randomUUID()
@@ -18,14 +24,16 @@ app.post('/session/initiate', async (c) => {
 
   // Initialize the Durable Object
   await sessionStub.fetch(new Request(c.req.url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: HttpMethods.POST,
+    headers: { 'Content-Type': getMimeType('json') },
     body: JSON.stringify({ secretToken })
   }))
 
   const workerUrl = new URL(c.req.url)
-  const wssBaseUrl = `wss://${workerUrl.hostname}`
-  const tabletConnectionUrl = `${wssBaseUrl}/session/${sessionId}/join?token=${secretToken}`
+  // Use 'ws' for localhost (local dev) and 'wss' for all other environments.
+  const protocol = workerUrl.hostname === 'localhost' ? protocols.WS : protocols.WSS
+  const wsBaseUrl = `${protocol}://${workerUrl.host}` // Use .host to include the port automatically
+  const tabletConnectionUrl = `${wsBaseUrl}/${slugs.SESSION}/${sessionId}/${slugs.JOIN}?${searchParams.TOKEN}=${secretToken}` // e.g., ws://localhost:8787/...
 
   return c.json({
     sessionId,
@@ -34,7 +42,7 @@ app.post('/session/initiate', async (c) => {
 })
 
 // 2. WebSocket endpoint for the Tablet to JOIN
-app.get('/session/:id/join', async (c) => {
+app.get(`/${slugs.SESSION}/${slugs.COLON_ID}/${slugs.JOIN}`, async (c) => {
   // IMPORTANT: Just forward the raw request - NO upgrade check here!
   const { id } = c.req.param()
   const { RELAY_SESSION } = c.env
@@ -46,7 +54,7 @@ app.get('/session/:id/join', async (c) => {
 })
 
 // 3. WebSocket endpoint for the PC to CONNECT
-app.get('/session/:id/connect', async (c) => {
+app.get(`/${slugs.SESSION}/${slugs.COLON_ID}/${slugs.CONNECT}`, async (c) => {
   // IMPORTANT: Just forward the raw request - NO upgrade check here!
   const { id } = c.req.param()
   const { RELAY_SESSION } = c.env

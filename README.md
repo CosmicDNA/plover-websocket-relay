@@ -12,14 +12,14 @@ Before touching your existing code, verify the core logic works using command li
 1. Create a Session (Simulate Plover Plugin):
 
 ```bash
-curl -s -X POST "$WORKER_URL/session/initiate" | tee session.log | jq
+curl -s -X POST "$WORKER_URL/session/initiate" | tee session.json | jq
 ```
 Expected Response: A JSON object with a sessionId and a tabletConnectionUrl.
 
 ```json
 {
-  "sessionId": "2c16b810-6977-4806-a067-31465be1d6bc",
-  "tabletConnectionUrl": "https://your-worker-name.your subdomain-name.workers.dev/session/2c16b810-6977-4806-a067-31465be1d6bc/join?token=06b7f9fa67e726ab699d83cf339cb68b7714b5a91f5239eab4ffb3fc161bb9b7"
+  "sessionId": "1b99df0a-d703-4e79-9cd4-cad7c035226c",
+  "tabletConnectionUrl": "ws://localhost:8787/session/1b99df0a-d703-4e79-9cd4-cad7c035226c/join?token=8601c575cc1094081961c692159d55f8051a0159fb2ab869b6cb1ac6c37e49c6"
 }
 ```
 
@@ -28,10 +28,7 @@ Use a WebSocket client like wscat to connect as the PC.
 
 ```bash
 # Construct the PC connection URL from the sessionId in the previous response
-
-# Format: wss://plover-websocket-relay.cosmicdna.workers.dev/session/<SESSION_ID>/connect
-
-wscat -c "wss://$BASE_WORKER_URL/session/`jq -r .sessionId session.json`/connect"
+wscat -c "${WORKER_PROTOCOL}://${WORKER_URL}/session/`jq -r .sessionId session.json`/connect"
 ```
 
 You should see a successful connection. The Worker logs will show PC connected to session.

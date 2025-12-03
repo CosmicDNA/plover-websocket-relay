@@ -13,6 +13,7 @@
 		"@eslint/js": "^9.7.0",
 		"@hono/eslint-config": "^2.0.3",
 		"eslint": "^9.39.1",
+		"eslint-plugin-simple-import-sort": "^12.1.1",
 		"globals": "^15.8.0",
 		"husky": "^9.1.7",
 		"lint-staged": "^16.2.7",
@@ -20,7 +21,10 @@
 		"wrangler": "^4.51.0"
 	},
 	"dependencies": {
-		"hono": "^4.10.7"
+		"hono": "^4.10.7",
+		"http-methods-constants": "^1.1.0",
+		"http-status-codes": "^2.3.0",
+		"websocket-event-codes": "^1.1.0"
 	},
 	"lint-staged": {
 		"*.{js,mjs,cjs}": [
