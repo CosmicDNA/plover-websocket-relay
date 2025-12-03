@@ -11,11 +11,16 @@ const deviceTags = Object.freeze({
 const labels = Object.freeze({
   TABLET_COUNTER: `${deviceTags.TABLET}Counter`,
   TABLET_CONNECTED: `${deviceTags.TABLET}_connected`,
-  TABLET_JOINED: `${deviceTags.TABLET}_joined`,
-  CLOSED_BY_TABLET: `Closed by ${deviceTags.TABLET}`,
-  SECRET_TOKEN: 'secretToken',
-  SYSTEM: "system",
-  CONNECTION_ESTABLISHED: 'Connection established'
+  // Generic session management labels
+  SECRET_TOKEN: 'secretToken',  SESSION_CLOSED_BY_CLIENT_PREFIX: 'Session closed by',
+  SESSION_CLOSED_BY_CLIENT_REQUEST: 'Session closed by client request',
+  LAST_TABLET_DISCONNECTED: 'Last tablet disconnected',
+  // System messages and types
+  SYSTEM: 'system',
+  CONNECTION_ESTABLISHED: 'Connection established',
+  INITIALIZATION_SUCCESSFUL: 'Initialization successful',
+  EXPECTED_WEBSOCKET: 'Expected WebSocket',
+  INVALID_TOKEN: 'Invalid token'
 })
 
 export {
