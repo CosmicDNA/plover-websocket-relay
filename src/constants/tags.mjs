@@ -9,7 +9,7 @@ const deviceTags = Object.freeze({
 })
 
 const labels = Object.freeze({
-  TABLET_COUNTER: `${deviceTags.TABLET}Counter`,
+  TABLET_ID_COUNTER: 'tabletIdCounter',
   TABLET_CONNECTED: `${deviceTags.TABLET}_connected`,
   // Generic session management labels
   SECRET_TOKEN: 'secretToken',  SESSION_CLOSED_BY_CLIENT_PREFIX: 'Session closed by',
@@ -20,7 +20,8 @@ const labels = Object.freeze({
   CONNECTION_ESTABLISHED: 'Connection established',
   INITIALIZATION_SUCCESSFUL: 'Initialization successful',
   EXPECTED_WEBSOCKET: 'Expected WebSocket',
-  INVALID_TOKEN: 'Invalid token'
+  INVALID_TOKEN: 'Invalid token',
+  PARTICIPANTS_LIST: 'participants_list'
 })
 
 export {

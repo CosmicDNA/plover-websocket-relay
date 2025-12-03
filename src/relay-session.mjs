@@ -6,7 +6,7 @@ import { StatusCodes } from '../node_modules/http-status-codes/build/cjs/status-
 import WsStatusCodes from '../node_modules/websocket-event-codes/index'
 import searchParams from './constants/search-params.mjs'
 import slugs from './constants/slugs.mjs'
-import { deviceTags, knownDeviceTags, labels } from './constants/tags.mjs'
+import { deviceTags, labels } from './constants/tags.mjs'
 import SingletonViolation from './errors/singleton-violation.mjs'
 
 /**
@@ -19,6 +19,7 @@ export class RelaySession extends DurableObject {
   ctx
 
   /**
+   * Creates an instance of the RelaySession Durable Object.
    * @param {DurableObjectState<Env>} ctx
    * @param {Env} env
    */
@@ -30,6 +31,11 @@ export class RelaySession extends DurableObject {
     console.debug(`[DO ${this.ctx.id}] Constructor called`)
   }
 
+  /**
+   * Initializes the session by storing the secret token and setting the initial expiry alarm.
+   * This is called once when the session is first created.
+   * @param {string} secretToken The secret token for authenticating the tablet.
+   */
   async initialize(secretToken) {
     await this.ctx.storage.put(labels.SECRET_TOKEN, secretToken)
     console.debug(`[DO ${this.ctx.id}] initialize() called`)
@@ -38,13 +44,13 @@ export class RelaySession extends DurableObject {
   }
 
   /**
-   *
-   * @param {String} deviceType
-   * @returns
+   * Enforces that only one client of a given type can be connected to the session.
+   * Throws a SingletonViolation if a client of the same type already exists.
+   * @param {string} deviceType The type of device to check (e.g., 'pc').
    */
   enforceSingleton(deviceType) {
     // Enforce singleton PC connection
-    if (this.ctx.getWebSockets(deviceType).length > 0) {
+    if (this.ctx.getWebSockets(`type:${deviceType}`).length > 0) {
       const message = `A ${deviceType} is already connected to this session.`
       console.warn(`[DO ${this.ctx.id}] Rejected second ${deviceType} connection.`)
       throw new SingletonViolation(message)
@@ -52,13 +58,14 @@ export class RelaySession extends DurableObject {
   }
 
   /**
-   *
-   * @param {Request} request
-   * @returns
+   * The main entry point for all requests to the Durable Object.
+   * It handles session initialization via POST and WebSocket upgrade requests via GET.
+   * @param {Request} request The incoming HTTP request.
+   * @returns {Promise<Response>}
    */
   async fetch(request) {
     // Ensure the client ID counter is initialized before use.
-    await this.getNextClientId()
+    await this.getNextTabletId()
 
     // Handle POST initialization
     if (request.method === HttpMethods.POST) {
@@ -79,6 +86,7 @@ export class RelaySession extends DurableObject {
     const pathEnd = url.pathname.split('/').at(-1)
 
     let clientType
+    let clientId
     try {
       switch (pathEnd) {
         case slugs.CONNECT:
@@ -104,37 +112,40 @@ export class RelaySession extends DurableObject {
       }
 
       // Assign a unique ID to the client for private messaging
-      const clientId = this.nextClientId++
-      await this.ctx.storage.put('nextClientId', this.nextClientId)
-
+      if (clientType === deviceTags.PC) {
+        clientId = 0 // PC is always ID 0
+      } else { // It's a tablet
+        clientId = this.nextTabletId++
+        await this.ctx.storage.put(labels.TABLET_ID_COUNTER, this.nextTabletId)
+      }
       // In the fetch method, after acceptWebSocket:
       console.debug(`[DO ${this.ctx.id}] Accepted WebSocket with tag: [${clientType}] (id: ${clientId})`)
-      this.ctx.acceptWebSocket(server, [clientType, `id:${clientId}`])
+      this.ctx.acceptWebSocket(server, [`type:${clientType}`, `id:${clientId}`])
 
       // Verify the tag was set
-      const taggedSockets = this.ctx.getWebSockets(clientType)
+      const taggedSockets = this.ctx.getWebSockets(`type:${clientType}`)
       console.debug(`[DO ${this.ctx.id}] Now has ${taggedSockets.length} ${clientType} socket(s)`)
 
       // Send immediate welcome message
       // This message includes the client's newly assigned ID
       server.send(JSON.stringify({
+        clientType,
         id: clientId,
         type: labels.SYSTEM,
-        message: labels.CONNECTION_ESTABLISHED,
-        clientType
+        message: labels.CONNECTION_ESTABLISHED
       }))
 
       // If tablet just connected, notify PC
       if (clientType === deviceTags.TABLET) {
-        this.callToComplementary(clientType,
-          (socket, otherClientType) => {
-            socket.send(JSON.stringify({
-              type: labels.TABLET_CONNECTED,
-              timestamp: Date.now(),
-              id: clientId // Let the PC know the ID of the new tablet
-            }))
-          }
-        )
+        const pcSockets = this.ctx.getWebSockets(`type:${deviceTags.PC}`)
+        for (const pcSocket of pcSockets) {
+          pcSocket.send(JSON.stringify({
+            clientType,
+            id: clientId, // Let the PC know the ID of the new tablet
+            type: labels.TABLET_CONNECTED,
+            timestamp: Date.now()
+          }))
+        }
       }
 
       return new Response(null, { // Body should be null for WebSocket upgrade
@@ -158,51 +169,18 @@ export class RelaySession extends DurableObject {
    * @returns {{id: number | null, type: string}}
    */
   getClientInfo(ws) {
-    const tags = this.ctx.getTags(ws)
-    const type = tags.find(tag => tag === deviceTags.PC || tag === deviceTags.TABLET) || deviceTags.UNKNOWN
-    const idTag = tags.find(tag => tag.startsWith('id:'))
-    const id = idTag ? parseInt(idTag.split(':')[1], 10) : null
-    return { id, type }
-  }
-
-  /**
-   *
-   * @param {String} clientType
-   * @returns
-   */
-  getComplementaryDevice(clientType) {
-    return clientType === deviceTags.PC ? deviceTags.TABLET : deviceTags.PC
-  }
-
-  /**
-   * @callback ComplementarySocketCallback
-   * @param {WebSocket} socket The complementary WebSocket instance.
-   * @param {string} otherClientType The type of the complementary client.
-   */
-
-  /**
-   * @callback EmptyComplementaryCallback
-   * @param {string} otherClientType The type of the complementary client that was not found.
-   */
-
-  /**
-   * Executes a callback for each WebSocket of the complementary device type.
-   * If no complementary devices are connected, an optional empty-state callback is executed.
-   * @param {string} clientType The type of the client initiating the action (e.g., 'pc' or 'tablet').
-   * @param {ComplementarySocketCallback} callback The function to execute for each complementary socket.
-   * @param {EmptyComplementaryCallback} [emptyCallback=() => {}] The function to execute if no complementary sockets are found.
-   */
-  callToComplementary(clientType, callback, emptyCallback = () => { }) {
-    const otherClientType = this.getComplementaryDevice(clientType)
-    const otherSockets = this.ctx.getWebSockets(otherClientType)
-
-    for (const otherSocket of otherSockets) {
-      callback(otherSocket, otherClientType)
-    }
-
-    if (otherSockets.length === 0) {
-      emptyCallback(otherClientType)
-    }
+    return this.ctx.getTags(ws).reduce((info, tag) => {
+      const [key, value] = tag.split(':')
+      switch (key) {
+        case "type":
+          info.type = value
+          break
+        case "id":
+          info.id = parseInt(value, 10)
+          break
+      }
+      return info
+    }, { id: null, type: deviceTags.UNKNOWN })
   }
 
   /**
@@ -246,6 +224,18 @@ export class RelaySession extends DurableObject {
         return
       }
 
+      if (payload?.command === 'get_participants') {
+        const allSockets = this.ctx.getWebSockets()
+        const participants = allSockets.map(socket => this.getClientInfo(socket))
+
+        ws.send(JSON.stringify({
+          type: labels.PARTICIPANTS_LIST,
+          participants
+        }))
+        console.debug(`[DO ${this.ctx.id}] Sent participants list to ${sender.type} (id: ${sender.id})`)
+        return
+      }
+
       const recipient = data.to
       if (!recipient || !payload) {
         console.warn(`[DO ${this.ctx.id}] Invalid message format from ${sender.type} (id: ${sender.id}). Missing 'to' or 'payload'.`)
@@ -259,16 +249,18 @@ export class RelaySession extends DurableObject {
       if (recipient.id !== undefined) {
         // Find the target socket by its ID tag
         const targetSockets = this.ctx.getWebSockets(`id:${recipient.id}`)
-        if (targetSockets.length > 0) {
-          const targetSocket = targetSockets[0]
-          const targetInfo = this.getClientInfo(targetSocket)
-          targetSocket.send(messageToSend)
-          console.debug(`[DO ${this.ctx.id}] Relayed private message from ${sender.type} (id: ${sender.id}) to ${targetInfo.type} (id: ${targetInfo.id})`)
-          return // Message sent, we are done
+        for (const socket of targetSockets) {
+          const info = this.getClientInfo(socket)
+          // Ensure the found socket also matches the recipient's type
+          if (info.type === recipient.type) {
+            socket.send(messageToSend)
+            console.debug(`[DO ${this.ctx.id}] Relayed private message from ${sender.type} (id: ${sender.id}) to ${info.type} (id: ${info.id})`)
+            return // Message sent, we are done
+          }
         }
         console.warn(`[DO ${this.ctx.id}] Could not find recipient: ${recipient.type} (id: ${recipient.id})`)
       } else { // Public message to a client type
-        const targetSockets = this.ctx.getWebSockets(recipient.type)
+        const targetSockets = this.ctx.getWebSockets(`type:${recipient.type}`)
         // Ensure the sender is not included in the public relay if they are also of the recipient type
         const senderSocket = ws
         if (targetSockets.length > 0) {
@@ -305,18 +297,22 @@ export class RelaySession extends DurableObject {
     if (!reason.startsWith(labels.SESSION_CLOSED_BY_CLIENT_PREFIX)) {
       switch (clientInfo.type) {
         case deviceTags.PC:
-          // PC disconnected unexpectedly, close all complementary (tablet) sockets.
-          this.callToComplementary(clientInfo.type, (socket, otherClientType) => {
-            console.debug(`[DO ${this.ctx.id}] Also closing this ${otherClientType} because ${clientInfo.type} (id: ${clientInfo.id}) disconnected`)
-            socket.close(WsStatusCodes.NORMAL_CLOSURE, `${clientInfo.type} (id: ${clientInfo.id}) disconnected`)
-          })
+          // PC disconnected unexpectedly, close all tablet sockets.
+          const tabletSockets = this.ctx.getWebSockets(`type:${deviceTags.TABLET}`)
+          for (const tabletSocket of tabletSockets) {
+            console.debug(`[DO ${this.ctx.id}] Also closing tablet because ${clientInfo.type} (id: ${clientInfo.id}) disconnected`)
+            tabletSocket.close(WsStatusCodes.NORMAL_CLOSURE, `${clientInfo.type} (id: ${clientInfo.id}) disconnected`)
+          }
           break
         case deviceTags.TABLET:
           // A tablet disconnected. If it was the last one, close the PC socket.
-          if (this.ctx.getWebSockets(deviceTags.TABLET).length === 0) {
+          if (this.ctx.getWebSockets(`type:${deviceTags.TABLET}`).length === 0) {
             const reason = `${labels.LAST_TABLET_DISCONNECTED} (was id: ${clientInfo.id})`
             console.debug(`[DO ${this.ctx.id}] ${reason}`)
-            this.callToComplementary(clientInfo.type, (socket) => socket.close(WsStatusCodes.NORMAL_CLOSURE, reason))
+            const pcSockets = this.ctx.getWebSockets(`type:${deviceTags.PC}`)
+            for (const pcSocket of pcSockets) {
+              pcSocket.close(WsStatusCodes.NORMAL_CLOSURE, reason)
+            }
           }
           break
       }
@@ -330,8 +326,8 @@ export class RelaySession extends DurableObject {
   /**
    * Fetches the next client ID from storage, or initializes it.
    */
-  async getNextClientId() {
-    this.nextClientId = (await this.ctx.storage.get('nextClientId')) || 0
+  async getNextTabletId() {
+    this.nextTabletId = (await this.ctx.storage.get(labels.TABLET_ID_COUNTER)) || 0
   }
 
   async alarm() {

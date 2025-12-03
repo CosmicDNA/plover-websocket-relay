@@ -73,8 +73,21 @@ In the PC's terminal, send a private message specifically to the tablet with ID 
 ```
 The tablet terminal will receive: {"message":"Hello from PC!","from":{"id":0,"type":"pc"}}
 
-3. Close the Session:
-Send a close command from any connected client. This will terminate the entire session for all participants.
+3. Get a List of Participants:
+From any client, send a get_participants command.
+
+```bash
+# In any wscat session:
+{"payload":{"command":"get_participants"}}
+```
+
+The client that sent the request will receive a list of all connected clients. For example:
+
+```json
+{"type":"participants_list","participants":[{"id":0,"type":"pc"},{"id":1,"type":"tablet"}]}
+```
+
+4. Close the Session: Send a close command from any connected client. This will terminate the entire session for all participants.
 
 ```bash
 # In any wscat session:
