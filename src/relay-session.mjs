@@ -1,11 +1,13 @@
 import { DurableObject } from 'cloudflare:workers'
 
 import HttpMethods from '../node_modules/http-methods-constants/index'
+import { ReasonPhrases } from '../node_modules/http-status-codes/build/cjs/reason-phrases'
 import { StatusCodes } from '../node_modules/http-status-codes/build/cjs/status-codes'
 import WsStatusCodes from '../node_modules/websocket-event-codes/index'
 import searchParams from './constants/search-params.mjs'
 import slugs from './constants/slugs.mjs'
 import { deviceTags, knownDeviceTags, labels } from './constants/tags.mjs'
+import SingletonViolation from './errors/singleton-violation.mjs'
 
 /**
  * @typedef {object} Env
@@ -37,6 +39,20 @@ export class RelaySession extends DurableObject {
 
   /**
    *
+   * @param {String} deviceType
+   * @returns
+   */
+  enforceSingleton(deviceType) {
+    // Enforce singleton PC connection
+    if (this.ctx.getWebSockets(deviceType).length > 0) {
+      const message = `A ${deviceType} is already connected to this session.`
+      console.warn(`[DO ${this.ctx.id}] Rejected second ${deviceType} connection.`)
+      throw new SingletonViolation(message)
+    }
+  }
+
+  /**
+   *
    * @param {Request} request
    * @returns
    */
@@ -60,60 +76,71 @@ export class RelaySession extends DurableObject {
     const pathEnd = url.pathname.split('/').at(-1)
 
     let clientType
-    switch (pathEnd) {
-      case slugs.CONNECT:
-        clientType = deviceTags.PC
-        break
-      case slugs.JOIN:
-        const token = url.searchParams.get(searchParams.TOKEN)
-        const storedToken = await this.ctx.storage.get(labels.SECRET_TOKEN)
-        if (token !== storedToken) {
-          const message = 'Invalid token'
-          server.close(WsStatusCodes.POLICY_VIOLATION, message)
-          return new Response(message, { status: StatusCodes.FORBIDDEN })
-        }
-        clientType = deviceTags.TABLET
-        // Tablet connected - cancel expiry alarm
-        await this.ctx.storage.deleteAlarm()
-        // Set keep-alive alarm
-        await this.ctx.storage.setAlarm(Date.now() + this.keepAliveInterval)
-        break
-      default:
-        clientType = deviceTags.UNKNOWN
-        break
+    try {
+      switch (pathEnd) {
+        case slugs.CONNECT:
+          clientType = deviceTags.PC
+          this.enforceSingleton(clientType)
+          break
+        case slugs.JOIN:
+          const token = url.searchParams.get(searchParams.TOKEN)
+          const storedToken = await this.ctx.storage.get(labels.SECRET_TOKEN)
+          if (token !== storedToken) {
+            const message = 'Invalid token'
+            server.close(WsStatusCodes.POLICY_VIOLATION, message)
+            return new Response(message, { status: StatusCodes.FORBIDDEN })
+          }
+          clientType = deviceTags.TABLET
+          // Tablet connected - cancel expiry alarm
+          await this.ctx.storage.deleteAlarm()
+          // Set keep-alive alarm
+          await this.ctx.storage.setAlarm(Date.now() + this.keepAliveInterval)
+          break
+        default:
+          clientType = deviceTags.UNKNOWN
+          break
+      }
+
+      // In the fetch method, after acceptWebSocket:
+      console.debug(`[DO ${this.ctx.id}] Accepted WebSocket with tag: [${clientType}]`)
+      this.ctx.acceptWebSocket(server, [clientType])
+
+      // Verify the tag was set
+      const taggedSockets = this.ctx.getWebSockets(clientType)
+      console.debug(`[DO ${this.ctx.id}] Now has ${taggedSockets.length} ${clientType} socket(s)`)
+
+      // Send immediate welcome message
+      server.send(JSON.stringify({
+        type: labels.SYSTEM,
+        message: labels.CONNECTION_ESTABLISHED,
+        clientType
+      }))
+
+      // If tablet just connected, notify PC
+      if (clientType === deviceTags.TABLET) {
+        this.callToComplementary(clientType,
+          (socket, otherClientType) => {
+            socket.send(JSON.stringify({
+              type: labels.TABLET_CONNECTED,
+              timestamp: Date.now()
+            }))
+          }
+        )
+      }
+
+      return new Response(null, { // Body should be null for WebSocket upgrade
+        status: StatusCodes.SWITCHING_PROTOCOLS,
+        webSocket: client
+      })
+    } catch (e) {
+      if (e instanceof SingletonViolation) {
+        server.close(WsStatusCodes.POLICY_VIOLATION, e.message)
+        return new Response(e.message, { status: StatusCodes.CONFLICT })
+      } else {
+        console.error(`[DO ${this.ctx.id}] Unexpected error in fetch:`, e)
+        return new Response(ReasonPhrases.INTERNAL_SERVER_ERROR, { status: StatusCodes.INTERNAL_SERVER_ERROR })
+      }
     }
-
-    // In the fetch method, after acceptWebSocket:
-    console.debug(`[DO ${this.ctx.id}] Accepted WebSocket with tag: [${clientType}]`)
-    this.ctx.acceptWebSocket(server, [clientType])
-
-    // Verify the tag was set
-    const taggedSockets = this.ctx.getWebSockets(clientType)
-    console.debug(`[DO ${this.ctx.id}] Now has ${taggedSockets.length} ${clientType} socket(s)`)
-
-    // Send immediate welcome message
-    server.send(JSON.stringify({
-      type: labels.SYSTEM,
-      message: labels.CONNECTION_ESTABLISHED,
-      clientType
-    }))
-
-    // If tablet just connected, notify PC
-    if (clientType === deviceTags.TABLET) {
-      this.callToComplementary(clientType,
-        (socket, otherClientType) => {
-          socket.send(JSON.stringify({
-            type: labels.TABLET_CONNECTED,
-            timestamp: Date.now()
-          }))
-        }
-      )
-    }
-
-    return new Response(null, {
-      status: StatusCodes.SWITCHING_PROTOCOLS,
-      webSocket: client,
-    })
   }
 
   /**
@@ -168,7 +195,7 @@ export class RelaySession extends DurableObject {
    * @param {ComplementarySocketCallback} callback The function to execute for each complementary socket.
    * @param {EmptyComplementaryCallback} [emptyCallback=() => {}] The function to execute if no complementary sockets are found.
    */
-  callToComplementary(clientType, callback, emptyCallback = () => {}) {
+  callToComplementary(clientType, callback, emptyCallback = () => { }) {
     const otherClientType = this.getComplementaryDevice(clientType)
     const otherSockets = this.ctx.getWebSockets(otherClientType)
 
@@ -181,6 +208,12 @@ export class RelaySession extends DurableObject {
     }
   }
 
+  /**
+   *
+   * @param {WebSocket} ws
+   * @param {string | ArrayBuffer} message
+   * @returns
+   */
   async webSocketMessage(ws, message) {
     // Determine clientType by checking which tag this WebSocket has
     let clientType = this.getWsTag(ws)
@@ -231,12 +264,24 @@ export class RelaySession extends DurableObject {
 
     console.debug(`[DO ${this.ctx.id}] ${clientType} disconnected: ${reason} (code: ${code})`)
 
-    // If we successfully identified which client disconnected, close the other
-    if (clientType !== deviceTags.UNKNOWN) {
-      this.callToComplementary(clientType, (socket, otherClientType) => {
-        console.debug(`[DO ${this.ctx.id}] Also closing this ${otherClientType} because ${clientType} disconnected`)
-        socket.close(WsStatusCodes.NORMAL_CLOSURE, `${clientType} disconnected`)
-      })
+    // If a graceful shutdown was initiated by a tablet, do nothing further.
+    if (reason !== labels.CLOSED_BY_TABLET) {
+      switch (clientType) {
+        case deviceTags.PC:
+          // PC disconnected unexpectedly, close all complementary (tablet) sockets.
+          this.callToComplementary(clientType, (socket, otherClientType) => {
+            console.debug(`[DO ${this.ctx.id}] Also closing this ${otherClientType} because ${clientType} disconnected`)
+            socket.close(WsStatusCodes.NORMAL_CLOSURE, `${clientType} disconnected`)
+          })
+          break
+        case deviceTags.TABLET:
+          // A tablet disconnected. If it was the last one, close the PC socket.
+          if (this.ctx.getWebSockets(deviceTags.TABLET).length === 0) {
+            console.debug(`[DO ${this.ctx.id}] Last tablet disconnected, closing PC socket.`)
+            this.callToComplementary(clientType, (socket) => socket.close(WsStatusCodes.NORMAL_CLOSURE, 'Last tablet disconnected'))
+          }
+          break
+      }
     }
 
     // Debug: Log current socket counts
