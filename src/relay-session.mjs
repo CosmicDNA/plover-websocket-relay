@@ -202,7 +202,7 @@ export class RelaySession extends DurableObject {
         return
       }
 
-      this.callToComplementary(
+      this.callToComplementary(clientType,
         (socket, otherClientType) => {
           socket.send(JSON.stringify(data))
           console.debug(`[DO ${this.ctx.id}] Relayed to this ${otherClientType}`)
