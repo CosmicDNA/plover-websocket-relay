@@ -5,6 +5,7 @@
 	"scripts": {
 		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
+		"test": "echo 'test me'",
 		"start": "wrangler dev",
 		"prepare": "husky"
 	},
