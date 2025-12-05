@@ -148,6 +148,7 @@ export class RelaySession extends DurableObject {
       // If tablet just connected, notify PC
       if (clientType === deviceTags.TABLET) {
         const newTabletToken = getNewToken()
+        await this.ctx.storage.put(labels.TABLET_CONNECTION_TOKEN, newTabletToken)
         this.iterateOverSockets(pcSocket => {
           pcSocket.send(JSON.stringify({
             clientType,
@@ -157,7 +158,6 @@ export class RelaySession extends DurableObject {
             timestamp: Date.now()
           }))
         }, `type:${deviceTags.PC}`)
-        await this.ctx.storage.put(labels.TABLET_CONNECTION_TOKEN, newTabletToken)
       }
 
       return new Response(null, { // Body should be null for WebSocket upgrade
