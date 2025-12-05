@@ -47,12 +47,19 @@ wscat -c "`jq -r .protocol session.json`://${WORKER_URL}/session/`jq -r .session
 Expected Results:
 
 The tablet terminal will connect and receive its own welcome message with a unique ID:
-{"id":1,"type":"system","message":"Connection established","clientType":"tablet"}
+`{"id":1,"type":"system","message":"Connection established","clientType":"tablet"}`
 
-The PC terminal will automatically receive a notification that a new tablet has joined, including the new tablet's ID:
-{"type":"tablet_connected","timestamp":167...,"id":1}
+The PC terminal will automatically receive a notification that a new tablet has joined. This message includes the new tablet's ID and, crucially, a **new** `newTabletToken`. This new token must be used to connect any subsequent tablets, as the original `tabletConnectionToken` is now invalid.
 
-The Worker logs will show Tablet connected to session.
+```json
+{
+  "clientType":"tablet",
+  "id":1,
+  "type":"tablet_connected",
+  "newTabletToken":"22b93a639b1eb0d5bf3f713d30c54841fe8a26fdf8a71c037d8cde13d9543424",
+  "timestamp":1764964194099
+}
+```
 
 ### 🧪 Step 2: Test Message Relay & Close
 With both clients connected, you can test the new private and public messaging system.
@@ -64,7 +71,7 @@ In the tablet's terminal, send a message to all clients of type pc. The PC clien
 # In the tablet's wscat session:
 {"to":{"type":"pc"},"payload":{"stroke":"KAT"}}
 ```
-The PC terminal will receive: {"stroke":"KAT","from":{"id":1,"type":"tablet"}}
+The PC terminal will receive: `{"stroke":"KAT","from":{"id":1,"type":"tablet"}}`
 
 2. Send a Private Message from PC to Tablet:
 In the PC's terminal, send a private message specifically to the tablet with ID 1.
@@ -73,7 +80,7 @@ In the PC's terminal, send a private message specifically to the tablet with ID 
 # In the PC's wscat session:
 {"to":{"type":"tablet","id":1},"payload":{"message":"Hello from PC!"}}
 ```
-The tablet terminal will receive: {"message":"Hello from PC!","from":{"id":0,"type":"pc"}}
+The tablet terminal will receive: `{"message":"Hello from PC!","from":{"id":0,"type":"pc"}}`
 
 3. Get a List of Participants:
 From any client, send a get_participants command.

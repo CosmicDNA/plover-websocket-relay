@@ -6,6 +6,7 @@ import HttpMethods from '../node_modules/http-methods-constants/index'
 import protocols from './constants/protocols.mjs'
 import slugs from './constants/slugs.mjs'
 import { RelaySession } from './relay-session.mjs'
+import getNewToken from './token-generator.mjs'
 
 const app = new Hono()
 app.use(logger())
@@ -17,11 +18,7 @@ app.post(`/${slugs.SESSION}/${slugs.INITIATE}`, async (c) => {
   const sessionId = crypto.randomUUID()
 
   // Use .map() which returns a new array, instead of .forEach() which returns undefined.
-  const [tabletConnectionToken, pcConnectionToken] = Array.from({ length: 2 }, () =>
-    [...crypto.getRandomValues(new Uint8Array(32))]
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('')
-  )
+  const [tabletConnectionToken, pcConnectionToken] = Array.from({ length: 2 }, getNewToken)
 
   const sessionIdFromName = RELAY_SESSION.idFromName(sessionId)
   const sessionStub = RELAY_SESSION.get(sessionIdFromName)

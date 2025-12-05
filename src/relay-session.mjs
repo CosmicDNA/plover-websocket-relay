@@ -8,6 +8,7 @@ import searchParams from './constants/search-params.mjs'
 import slugs from './constants/slugs.mjs'
 import { deviceTags, labels } from './constants/tags.mjs'
 import SingletonViolation from './errors/singleton-violation.mjs'
+import getNewToken from './token-generator.mjs'
 
 /**
  * @typedef {object} Env
@@ -146,14 +147,17 @@ export class RelaySession extends DurableObject {
 
       // If tablet just connected, notify PC
       if (clientType === deviceTags.TABLET) {
+        const newTabletToken = getNewToken()
         this.iterateOverSockets(pcSocket => {
           pcSocket.send(JSON.stringify({
             clientType,
             id: clientId, // Let the PC know the ID of the new tablet
             type: labels.TABLET_CONNECTED,
+            newTabletToken,
             timestamp: Date.now()
           }))
         }, `type:${deviceTags.PC}`)
+        await this.ctx.storage.put(labels.TABLET_CONNECTION_TOKEN, newTabletToken)
       }
 
       return new Response(null, { // Body should be null for WebSocket upgrade
