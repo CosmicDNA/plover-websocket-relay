@@ -249,13 +249,6 @@ export class RelaySession extends DurableObject {
 
       // New message routing logic
       const payload = data?.payload
-
-      const recipient = data?.to
-      if (!recipient || !payload) {
-        console.warn(`[DO ${this.ctx.id}] Invalid message format from ${sender.type} (id: ${sender.id}). Missing 'to' or 'payload'.`)
-        return
-      }
-
       const close = () => {
         console.debug(`[DO ${this.ctx.id}] ${sender.type} (id: ${sender.id}) requested closure. Closing all connections.`)
         // Get all sockets currently in the session and close them to terminate the session.
@@ -283,6 +276,14 @@ export class RelaySession extends DurableObject {
         case labels.GET_PARTICIPANTS_CMD:
           getParticipants()
           return
+      }
+
+      // If the message was not a command, it must be a relay message.
+      // Relay messages require a 'to' recipient and a 'payload'.
+      const recipient = data?.to
+      if (!recipient || !payload) {
+        console.warn(`[DO ${this.ctx.id}] Invalid message format from ${sender.type} (id: ${sender.id}). Not a command and is missing 'to' or 'payload'.`)
+        return
       }
 
       // Add sender information to the payload
