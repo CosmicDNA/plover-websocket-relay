@@ -352,7 +352,6 @@ export class RelaySession extends DurableObject {
             this.iterateOverSockets(pcSocket => {
               pcSocket.close(WsStatusCodes.NORMAL_CLOSURE, reason)
             }, labels.PC_TYPE)
-            return // The session is effectively over, no need for further logging.
           }
           break
       }

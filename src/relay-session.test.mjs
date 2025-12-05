@@ -545,6 +545,8 @@ describe('RelaySession Durable Object', () => {
         if (tag === labels.TABLET_TYPE) return []
         // When iterating to close the PC, return the PC socket.
         if (tag === labels.PC_TYPE) return [pcSocket]
+        // Handle the final call with no tag.
+        return []
       })
 
       await relaySession.webSocketClose(tabletSocket1, 1001, 'Tablet disconnected', false)
