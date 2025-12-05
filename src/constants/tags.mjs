@@ -1,15 +1,15 @@
 const knownDeviceTags = Object.freeze({
-  PC: "pc",
-  TABLET: "tablet"
+  PC: 'pc',
+  TABLET: 'tablet'
 })
 
 const websocketTags = Object.freeze({
-  TYPE: "type",
-  ID: "id"
+  TYPE: 'type',
+  ID: 'id'
 })
 
 const deviceTags = Object.freeze({
-  UNKNOWN: "unknown",
+  UNKNOWN: 'unknown',
   ...knownDeviceTags
 })
 
@@ -18,7 +18,7 @@ const labels = Object.freeze({
   TABLET_CONNECTED: `${deviceTags.TABLET}_connected`,
   // Generic session management labels
   TABLET_CONNECTION_TOKEN: 'tabletConnectionToken',
-  PC_CONNECTION_TOKEN: "pcConnectionToken",
+  PC_CONNECTION_TOKEN: 'pcConnectionToken',
   SESSION_CLOSED_BY_CLIENT_PREFIX: 'Session closed by',
   SESSION_CLOSED_BY_CLIENT_REQUEST: 'Session closed by client request',
   LAST_TABLET_DISCONNECTED: 'Last tablet disconnected',
@@ -32,7 +32,7 @@ const labels = Object.freeze({
   PC_TYPE: `${websocketTags.TYPE}:${deviceTags.PC}`,
   TABLET_TYPE: `${websocketTags.TYPE}:${deviceTags.TABLET}`,
   GET_PARTICIPANTS_CMD: 'get_participants',
-  CLOSE_CMD: "close"
+  CLOSE_CMD: 'close'
 })
 
 export {

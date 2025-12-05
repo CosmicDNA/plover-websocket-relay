@@ -3,4 +3,4 @@
 # npm test
 
 lint-staged
-npm test
+npm test run --related

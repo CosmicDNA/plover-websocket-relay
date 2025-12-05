@@ -1,5 +1,5 @@
 const searchParams = Object.freeze({
-  TOKEN: "token"
+  TOKEN: 'token'
 })
 
 export default searchParams

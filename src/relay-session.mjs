@@ -8,6 +8,7 @@ import searchParams from './constants/search-params.mjs'
 import slugs from './constants/slugs.mjs'
 import { deviceTags, labels, websocketTags } from './constants/tags.mjs'
 import SingletonViolation from './errors/singleton-violation.mjs'
+import TokenError from './errors/token-error.mjs'
 import getNewToken from './token-generator.mjs'
 
 /**
@@ -24,7 +25,7 @@ export class RelaySession extends DurableObject {
    * @param {DurableObjectState<Env>} ctx
    * @param {Env} env
    */
-  constructor(ctx, env) {
+  constructor (ctx, env) {
     super(ctx, env)
     this.ctx = ctx
     this.sessionAlarmTime = 5 * 60 * 1000
@@ -38,7 +39,7 @@ export class RelaySession extends DurableObject {
    * @param {string} tabletConnectionToken The secret token for authenticating the tablet.
    * @param {string} pcConnectionToken The secret token for authenticating the PC.
    */
-  async initialize(tabletConnectionToken, pcConnectionToken) {
+  async initialize (tabletConnectionToken, pcConnectionToken) {
     await this.ctx.storage.put(labels.TABLET_CONNECTION_TOKEN, tabletConnectionToken)
     await this.ctx.storage.put(labels.PC_CONNECTION_TOKEN, pcConnectionToken)
     console.debug(`[DO ${this.ctx.id}] initialize() called, tokens stored`)
@@ -51,7 +52,7 @@ export class RelaySession extends DurableObject {
    * Throws a SingletonViolation if a client of the same type already exists.
    * @param {string} deviceType The type of device to check (e.g., 'pc').
    */
-  enforceSingleton(deviceType) {
+  enforceSingleton (deviceType) {
     // Enforce singleton PC connection
     if (this.ctx.getWebSockets(`type:${deviceType}`).length > 0) {
       const message = `A ${deviceType} is already connected to this session.`
@@ -66,105 +67,116 @@ export class RelaySession extends DurableObject {
    * @param {Request} request The incoming HTTP request.
    * @returns {Promise<Response>}
    */
-  async fetch(request) {
-    // Ensure the client ID counter is initialized before use.
-    await this.getNextTabletId()
-
-    // Handle POST initialization
-    if (request.method === HttpMethods.POST) {
-      const { tabletConnectionToken, pcConnectionToken } = await request.json()
-      await this.initialize(tabletConnectionToken, pcConnectionToken)
-      return new Response(labels.INITIALIZATION_SUCCESSFUL, { status: StatusCodes.OK })
-    }
-
-    // WebSocket upgrade
-    if (request.headers.get('Upgrade') !== 'websocket') {
-      return new Response(labels.EXPECTED_WEBSOCKET, { status: StatusCodes.UPGRADE_REQUIRED })
-    }
-
-    const [client, server] = Object.values(new WebSocketPair())
-
-    // Get client type from URL path
-    const url = new URL(request.url)
-    const pathEnd = url.pathname.split('/').at(-1)
-
+  async fetch (request) {
     let clientType
     let clientId
+
+    let client, server
+
     try {
+      // Ensure the client ID counter is initialized before use.
+      await this.getNextTabletId()
+
+      // Handle POST initialization
+      if (request.method === HttpMethods.POST) {
+        const { tabletConnectionToken, pcConnectionToken } = await request.json()
+        await this.initialize(tabletConnectionToken, pcConnectionToken)
+        return new Response(labels.INITIALIZATION_SUCCESSFUL, { status: StatusCodes.OK })
+      }
+
+      // WebSocket upgrade
+      if (request.headers.get('Upgrade') !== 'websocket') {
+        return new Response(labels.EXPECTED_WEBSOCKET, { status: StatusCodes.UPGRADE_REQUIRED })
+      }
+
+      [client, server] = Object.values(new globalThis.WebSocketPair())
+
+      // Get client type from URL path
+      const url = new URL(request.url)
+      const pathEnd = url.pathname.split('/').at(-1)
+
+      const connect = async () => {
+        clientType = deviceTags.PC
+        const pcToken = url.searchParams.get(searchParams.TOKEN)
+
+        this.enforceSingleton(clientType)
+
+        const storedPcToken = await this.ctx.storage.get(labels.PC_CONNECTION_TOKEN)
+        if (pcToken !== storedPcToken) {
+          throw new TokenError(labels.INVALID_TOKEN)
+        }
+        clientId = 0 // PC is always ID 0
+      }
+
+      const join = async () => {
+        const token = url.searchParams.get(searchParams.TOKEN)
+        const storedToken = await this.ctx.storage.get(labels.TABLET_CONNECTION_TOKEN)
+        if (token !== storedToken) {
+          throw new TokenError(labels.INVALID_TOKEN)
+        }
+        clientType = deviceTags.TABLET
+        // Tablet connected - cancel expiry alarm
+        await this.ctx.storage.deleteAlarm()
+        // Set keep-alive alarm
+        await this.ctx.storage.setAlarm(Date.now() + this.keepAliveInterval)
+
+        clientId = this.nextTabletId++
+        await this.ctx.storage.put(labels.TABLET_ID_COUNTER, this.nextTabletId)
+
+        const newTabletToken = getNewToken()
+        await this.ctx.storage.put(labels.TABLET_CONNECTION_TOKEN, newTabletToken)
+        this.iterateOverSockets(pcSocket => {
+          pcSocket.send(JSON.stringify({
+            clientType,
+            id: clientId, // Let the PC know the ID of the new tablet
+            type: labels.TABLET_CONNECTED,
+            newTabletToken,
+            timestamp: Date.now()
+          }))
+        }, labels.PC_TYPE)
+      }
+
       switch (pathEnd) {
         case slugs.CONNECT:
-          clientType = deviceTags.PC
-          const pcToken = url.searchParams.get(searchParams.TOKEN)
-          const storedPcToken = await this.ctx.storage.get(labels.PC_CONNECTION_TOKEN)
-          if (pcToken !== storedPcToken) {
-            server.close(WsStatusCodes.POLICY_VIOLATION, labels.INVALID_TOKEN)
-            return new Response(labels.INVALID_TOKEN, { status: StatusCodes.FORBIDDEN })
-          }
-
-          this.enforceSingleton(clientType)
-          clientId = 0 // PC is always ID 0
+          await connect()
           break
         case slugs.JOIN:
-          const token = url.searchParams.get(searchParams.TOKEN)
-          const storedToken = await this.ctx.storage.get(labels.TABLET_CONNECTION_TOKEN)
-          if (token !== storedToken) {
-            server.close(WsStatusCodes.POLICY_VIOLATION, labels.INVALID_TOKEN)
-            return new Response(labels.INVALID_TOKEN, { status: StatusCodes.FORBIDDEN })
-          }
-          clientType = deviceTags.TABLET
-          // Tablet connected - cancel expiry alarm
-          await this.ctx.storage.deleteAlarm()
-          // Set keep-alive alarm
-          await this.ctx.storage.setAlarm(Date.now() + this.keepAliveInterval)
-
-          clientId = this.nextTabletId++
-          await this.ctx.storage.put(labels.TABLET_ID_COUNTER, this.nextTabletId)
-
-          const newTabletToken = getNewToken()
-          await this.ctx.storage.put(labels.TABLET_CONNECTION_TOKEN, newTabletToken)
-          this.iterateOverSockets(pcSocket => {
-            pcSocket.send(JSON.stringify({
-              clientType,
-              id: clientId, // Let the PC know the ID of the new tablet
-              type: labels.TABLET_CONNECTED,
-              newTabletToken,
-              timestamp: Date.now()
-            }))
-          }, labels.PC_TYPE)
-
+          await join()
           break
         default:
           clientType = deviceTags.UNKNOWN
+          clientId = null
           break
       }
 
-      // In the fetch method, after acceptWebSocket:
       console.debug(`[DO ${this.ctx.id}] Accepted WebSocket with tag: [${clientType}] (id: ${clientId})`)
-      this.ctx.acceptWebSocket(server, [`${websocketTags.TYPE}:${clientType}`, `${websocketTags.ID}:${clientId}`])
+      const tags = [`${websocketTags.TYPE}:${clientType}`, `${websocketTags.ID}:${clientId}`]
+      this.ctx.acceptWebSocket(server, tags)
 
-      // Verify the tag was set
       const taggedSockets = this.ctx.getWebSockets(`${websocketTags.TYPE}:${clientType}`)
       console.debug(`[DO ${this.ctx.id}] Now has ${taggedSockets.length} ${clientType} socket(s)`)
 
-      // Send immediate welcome message
-      // This message includes the client's newly assigned ID
-      server.send(JSON.stringify({
+      const welcomeMessage = {
         clientType,
         id: clientId,
         type: labels.SYSTEM,
         message: labels.CONNECTION_ESTABLISHED
-      }))
+      }
+      server.send(JSON.stringify(welcomeMessage))
 
-      return new Response(null, { // Body should be null for WebSocket upgrade
+      return new Response(null, {
         status: StatusCodes.SWITCHING_PROTOCOLS,
         webSocket: client
       })
     } catch (e) {
+      // Ensure the server-side socket is closed on error if it was created.
       if (e instanceof SingletonViolation) {
-        server.close(WsStatusCodes.POLICY_VIOLATION, e.message)
+        server?.close(WsStatusCodes.POLICY_VIOLATION, e.message)
         return new Response(e.message, { status: StatusCodes.CONFLICT })
+      } else if (e instanceof TokenError) {
+        server?.close(WsStatusCodes.POLICY_VIOLATION, e.message)
+        return new Response(e.message, { status: StatusCodes.FORBIDDEN })
       } else {
-        console.error(`[DO ${this.ctx.id}] Unexpected error in fetch:`, e)
         return new Response(ReasonPhrases.INTERNAL_SERVER_ERROR, { status: StatusCodes.INTERNAL_SERVER_ERROR })
       }
     }
@@ -184,8 +196,8 @@ export class RelaySession extends DurableObject {
    * @param {string} [tag] An optional tag to filter which WebSockets to iterate over.
    * @returns {Array<T>} An array containing the return value of the callback for each socket.
    */
-  iterateOverSockets(callback, tag = undefined) {
-    const sockets = this.ctx.getWebSockets(tag)
+  iterateOverSockets (callback, tag = undefined) {
+    const sockets = this.ctx.getWebSockets(tag) || []
     return sockets.map(socket => callback(socket))
   }
 
@@ -194,7 +206,7 @@ export class RelaySession extends DurableObject {
    * @param {WebSocket} ws The WebSocket instance.
    * @returns {{id: number | null, type: string}}
    */
-  getClientInfo(ws) {
+  getClientInfo (ws) {
     return this.ctx.getTags(ws).reduce((info, tag) => {
       const [key, value] = tag.split(':')
       switch (key) {
@@ -215,7 +227,7 @@ export class RelaySession extends DurableObject {
    * @param {string | ArrayBuffer} message
    * @returns
    */
-  async webSocketMessage(ws, message) {
+  async webSocketMessage (ws, message) {
     // Determine clientType by checking which tag this WebSocket has
     const sender = this.getClientInfo(ws)
 
@@ -244,24 +256,32 @@ export class RelaySession extends DurableObject {
         return
       }
 
+      const close = () => {
+        console.debug(`[DO ${this.ctx.id}] ${sender.type} (id: ${sender.id}) requested closure. Closing all connections.`)
+        // Get all sockets currently in the session and close them to terminate the session.
+        const closeReason = `${labels.SESSION_CLOSED_BY_CLIENT_PREFIX} ${sender.type} (id: ${sender.id})`
+        this.iterateOverSockets((socket) => {
+          socket.close(WsStatusCodes.NORMAL_CLOSURE, closeReason)
+        })
+      }
+
+      const getParticipants = () => {
+        const participants = this.iterateOverSockets(socket => this.getClientInfo(socket))
+
+        ws.send(JSON.stringify({
+          type: labels.PARTICIPANTS_LIST,
+          participants
+        }))
+        console.debug(`[DO ${this.ctx.id}] Sent participants list to ${sender.type} (id: ${sender.id})`)
+      }
+
       // Handle special commands within the payload
       switch (payload?.command) {
         case labels.CLOSE_CMD:
-          console.debug(`[DO ${this.ctx.id}] ${sender.type} (id: ${sender.id}) requested closure. Closing all connections.`)
-          // Get all sockets currently in the session and close them to terminate the session.
-          const closeReason = `${labels.SESSION_CLOSED_BY_CLIENT_PREFIX} ${sender.type} (id: ${sender.id})`
-          this.iterateOverSockets((socket) => {
-            socket.close(WsStatusCodes.NORMAL_CLOSURE, closeReason)
-          })
+          close()
           return
         case labels.GET_PARTICIPANTS_CMD:
-          const participants = this.iterateOverSockets(socket => this.getClientInfo(socket))
-
-          ws.send(JSON.stringify({
-            type: labels.PARTICIPANTS_LIST,
-            participants
-          }))
-          console.debug(`[DO ${this.ctx.id}] Sent participants list to ${sender.type} (id: ${sender.id})`)
+          getParticipants()
           return
       }
 
@@ -309,7 +329,7 @@ export class RelaySession extends DurableObject {
    * @param {string} reason A human-readable string explaining the reason for closure.
    * @param {boolean} wasClean A boolean indicating whether the connection was closed cleanly.
    */
-  async webSocketClose(ws, code, reason, wasClean) {
+  async webSocketClose (ws, code, reason, wasClean) {
     // Method 1: Check all active WebSocket tags to identify this one
     const clientInfo = this.getClientInfo(ws)
     console.debug(`[DO ${this.ctx.id}] ${clientInfo.type} (id: ${clientInfo.id}) disconnected: ${reason} (code: ${code})`)
@@ -332,6 +352,7 @@ export class RelaySession extends DurableObject {
             this.iterateOverSockets(pcSocket => {
               pcSocket.close(WsStatusCodes.NORMAL_CLOSURE, reason)
             }, labels.PC_TYPE)
+            return // The session is effectively over, no need for further logging.
           }
           break
       }
@@ -345,11 +366,11 @@ export class RelaySession extends DurableObject {
   /**
    * Fetches the next client ID from storage, or initializes it.
    */
-  async getNextTabletId() {
+  async getNextTabletId () {
     this.nextTabletId = (await this.ctx.storage.get(labels.TABLET_ID_COUNTER)) || 0
   }
 
-  async alarm() {
+  async alarm () {
     console.debug(`[DO ${this.ctx.id}] Alarm triggered`)
 
     // Check if we have active WebSockets
