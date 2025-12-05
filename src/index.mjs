@@ -4,7 +4,6 @@ import { getMimeType } from 'hono/utils/mime'
 
 import HttpMethods from '../node_modules/http-methods-constants/index'
 import protocols from './constants/protocols.mjs'
-import searchParams from './constants/search-params.mjs'
 import slugs from './constants/slugs.mjs'
 import { RelaySession } from './relay-session.mjs'
 
@@ -16,28 +15,34 @@ app.post(`/${slugs.SESSION}/${slugs.INITIATE}`, async (c) => {
   const { RELAY_SESSION } = c.env
 
   const sessionId = crypto.randomUUID()
-  const secretToken = [...crypto.getRandomValues(new Uint8Array(32))]
-    .map(b => b.toString(16).padStart(2, '0')).join('')
+
+  // Use .map() which returns a new array, instead of .forEach() which returns undefined.
+  const [tabletConnectionToken, pcConnectionToken] = Array.from({ length: 2 }, () =>
+    [...crypto.getRandomValues(new Uint8Array(32))]
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('')
+  )
 
   const sessionIdFromName = RELAY_SESSION.idFromName(sessionId)
   const sessionStub = RELAY_SESSION.get(sessionIdFromName)
 
   // Initialize the Durable Object
-  await sessionStub.fetch(new Request(c.req.url, {
+  const initRequest = new Request(c.req.url, {
     method: HttpMethods.POST,
     headers: { 'Content-Type': getMimeType('json') },
-    body: JSON.stringify({ secretToken })
-  }))
+    body: JSON.stringify({ tabletConnectionToken, pcConnectionToken })
+  })
+  await sessionStub.fetch(initRequest)
 
   const workerUrl = new URL(c.req.url)
   // Use 'ws' for localhost (local dev) and 'wss' for all other environments.
   const protocol = workerUrl.hostname === 'localhost' ? protocols.WS : protocols.WSS
-  const wsBaseUrl = `${protocol}://${workerUrl.host}` // Use .host to include the port automatically
-  const tabletConnectionUrl = `${wsBaseUrl}/${slugs.SESSION}/${sessionId}/${slugs.JOIN}?${searchParams.TOKEN}=${secretToken}` // e.g., ws://localhost:8787/...
 
   return c.json({
+    protocol,
     sessionId,
-    tabletConnectionUrl
+    tabletConnectionToken,
+    pcConnectionToken
   })
 })
 

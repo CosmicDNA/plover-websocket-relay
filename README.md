@@ -14,12 +14,14 @@ Before touching your existing code, verify the core logic works using command li
 ```bash
 curl -s -X POST "$WORKER_URL/session/initiate" | tee session.json | jq
 ```
-Expected Response: A JSON object with a sessionId and a tabletConnectionUrl.
+Expected Response: A JSON object with a protocol, sessionId, tabletConnectionToken and pcConnectionToken.
 
 ```json
 {
-  "sessionId": "1b99df0a-d703-4e79-9cd4-cad7c035226c",
-  "tabletConnectionUrl": "ws://localhost:8787/session/1b99df0a-d703-4e79-9cd4-cad7c035226c/join?token=8601c575cc1094081961c692159d55f8051a0159fb2ab869b6cb1ac6c37e49c6"
+  "protocol": "ws",
+  "sessionId": "d7733ec2-248c-4574-bd68-875304d6f1db",
+  "tabletConnectionToken": "c836995d4d9fdcb06bc298d2ccb4b6979758c177a5fa9c34b7477d23bcb27a56",
+  "pcConnectionToken": "2c5e1e9449a1f15101361ed6d32af1562c26093c2d3843a97833eb0647c11151"
 }
 ```
 
@@ -28,7 +30,7 @@ Use a WebSocket client like wscat to connect as the PC.
 
 ```bash
 # Construct the PC connection URL from the sessionId in the previous response
-wscat -c "${WORKER_PROTOCOL}://${WORKER_URL}/session/`jq -r .sessionId session.json`/connect"
+wscat -c "`jq -r .protocol session.json`://${WORKER_URL}/session/`jq -r .sessionId session.json`/connect?token=`jq -r .pcConnectionToken session.json`"
 ```
 
 You should see a successful connection. The Worker logs will show PC connected to session.
@@ -40,7 +42,7 @@ Upon connecting, the PC client will receive a welcome message with its unique se
 In a second terminal, use the exact tabletConnectionUrl from Step 1.
 
 ```bash
-wscat -c `jq -r .tabletConnectionUrl session.json`
+wscat -c "`jq -r .protocol session.json`://${WORKER_URL}/session/`jq -r .sessionId session.json`/join?token=`jq -r .tabletConnectionToken session.json`"
 ```
 Expected Results:
 

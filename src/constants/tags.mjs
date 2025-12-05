@@ -12,7 +12,9 @@ const labels = Object.freeze({
   TABLET_ID_COUNTER: 'tabletIdCounter',
   TABLET_CONNECTED: `${deviceTags.TABLET}_connected`,
   // Generic session management labels
-  SECRET_TOKEN: 'secretToken',  SESSION_CLOSED_BY_CLIENT_PREFIX: 'Session closed by',
+  TABLET_CONNECTION_TOKEN: 'tabletConnectionToken',
+  PC_CONNECTION_TOKEN: "pcConnectionToken",
+  SESSION_CLOSED_BY_CLIENT_PREFIX: 'Session closed by',
   SESSION_CLOSED_BY_CLIENT_REQUEST: 'Session closed by client request',
   LAST_TABLET_DISCONNECTED: 'Last tablet disconnected',
   // System messages and types

@@ -34,11 +34,13 @@ export class RelaySession extends DurableObject {
   /**
    * Initializes the session by storing the secret token and setting the initial expiry alarm.
    * This is called once when the session is first created.
-   * @param {string} secretToken The secret token for authenticating the tablet.
+   * @param {string} tabletConnectionToken The secret token for authenticating the tablet.
+   * @param {string} pcConnectionToken The secret token for authenticating the PC.
    */
-  async initialize(secretToken) {
-    await this.ctx.storage.put(labels.SECRET_TOKEN, secretToken)
-    console.debug(`[DO ${this.ctx.id}] initialize() called`)
+  async initialize(tabletConnectionToken, pcConnectionToken) {
+    await this.ctx.storage.put(labels.TABLET_CONNECTION_TOKEN, tabletConnectionToken)
+    await this.ctx.storage.put(labels.PC_CONNECTION_TOKEN, pcConnectionToken)
+    console.debug(`[DO ${this.ctx.id}] initialize() called, tokens stored`)
     await this.ctx.storage.setAlarm(Date.now() + this.sessionAlarmTime)
     console.debug(`[DO ${this.ctx.id}] Session expiry alarm set`)
   }
@@ -69,8 +71,8 @@ export class RelaySession extends DurableObject {
 
     // Handle POST initialization
     if (request.method === HttpMethods.POST) {
-      const { secretToken } = await request.json()
-      await this.initialize(secretToken)
+      const { tabletConnectionToken, pcConnectionToken } = await request.json()
+      await this.initialize(tabletConnectionToken, pcConnectionToken)
       return new Response(labels.INITIALIZATION_SUCCESSFUL, { status: StatusCodes.OK })
     }
 
@@ -91,11 +93,18 @@ export class RelaySession extends DurableObject {
       switch (pathEnd) {
         case slugs.CONNECT:
           clientType = deviceTags.PC
+          const pcToken = url.searchParams.get(searchParams.TOKEN)
+          const storedPcToken = await this.ctx.storage.get(labels.PC_CONNECTION_TOKEN)
+          if (pcToken !== storedPcToken) {
+            server.close(WsStatusCodes.POLICY_VIOLATION, labels.INVALID_TOKEN)
+            return new Response(labels.INVALID_TOKEN, { status: StatusCodes.FORBIDDEN })
+          }
+
           this.enforceSingleton(clientType)
           break
         case slugs.JOIN:
           const token = url.searchParams.get(searchParams.TOKEN)
-          const storedToken = await this.ctx.storage.get(labels.SECRET_TOKEN)
+          const storedToken = await this.ctx.storage.get(labels.TABLET_CONNECTION_TOKEN)
           if (token !== storedToken) {
             server.close(WsStatusCodes.POLICY_VIOLATION, labels.INVALID_TOKEN)
             return new Response(labels.INVALID_TOKEN, { status: StatusCodes.FORBIDDEN })
@@ -355,7 +364,7 @@ export class RelaySession extends DurableObject {
     } else {
       // No active connections - session expired
       console.debug(`[DO ${this.ctx.id}] Session expired - cleaning up`)
-      await this.ctx.storage.delete(labels.SECRET_TOKEN)
+      await this.ctx.storage.delete(labels.TABLET_CONNECTION_TOKEN)
     }
   }
 }
