@@ -558,10 +558,7 @@ describe('RelaySession Durable Object', () => {
     it('should handle disconnection of an unknown client type gracefully', async () => {
       const unknownSocket = { id: 'unknown' }
       mockSockets.set(unknownSocket, [`${websocketTags.TYPE}:${deviceTags.UNKNOWN}`, `${websocketTags.ID}:-1`])
-
-      // No expect, just ensuring it doesn't crash
-      await relaySession.webSocketClose(unknownSocket, 1001, 'Unknown disconnected', false)
-      expect(true).toBe(true)
+      await expect(relaySession.webSocketClose(unknownSocket, 1001, 'Unknown disconnected', false)).resolves.not.toThrow()
     })
   })
 
