@@ -541,12 +541,16 @@ describe('RelaySession Durable Object', () => {
     it('should close PC if the last tablet disconnects', async () => {
       // Simulate that tablet1 is the only tablet connected
       state.getWebSockets.mockImplementation((tag) => {
-        // When checking for remaining tablets, return an empty array.
-        if (tag === labels.TABLET_TYPE) return []
-        // When iterating to close the PC, return the PC socket.
-        if (tag === labels.PC_TYPE) return [pcSocket]
-        // Handle the final call with no tag.
-        return []
+        switch (tag) {
+          // When iterating to close the PC, return the PC socket.
+          case labels.PC_TYPE:
+            return [pcSocket]
+          case labels.TABLET_TYPE:
+          // When checking for remaining tablets, return an empty array.
+          // eslint-disable-next-line no-fallthrough
+          default:
+            return []
+        }
       })
 
       await relaySession.webSocketClose(tabletSocket1, 1001, 'Tablet disconnected', false)

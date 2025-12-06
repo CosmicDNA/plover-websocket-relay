@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "target": "esnext",
-    "module": "esnext",
-    "lib": ["esnext"],
+    "module": "nodenext",
+    "lib": ["ESNext"],
     "types": ["@cloudflare/workers-types"]
   },
   "include": ["src/**/*"],
