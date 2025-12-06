@@ -1,8 +1,8 @@
+import HttpMethods from 'http-methods-constants'
+import { StatusCodes } from 'http-status-codes'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import WsStatusCodes from 'websocket-event-codes'
 
-import HttpMethods from '../node_modules/http-methods-constants/index'
-import { StatusCodes } from '../node_modules/http-status-codes/build/cjs/status-codes'
-import WsStatusCodes from '../node_modules/websocket-event-codes/index'
 import searchParams from './constants/search-params.mjs'
 import slugs from './constants/slugs.mjs'
 import { deviceTags, labels, websocketTags } from './constants/tags.mjs'
@@ -11,6 +11,10 @@ import { RelaySession } from './relay-session.mjs'
 
 const MOCK_TABLET_TOKEN = 'mock-tablet-token'
 const MOCK_PC_TOKEN = 'mock-pc-token'
+
+const getRandomInt = (max = 1000) => {
+  return Math.floor(Math.random() * max)
+}
 
 // Mock 'cloudflare:workers' to provide a base class for DurableObject
 vi.mock('cloudflare:workers', () => ({
@@ -50,6 +54,7 @@ global.WebSocketPair = class WebSocketPair {
 describe('RelaySession Durable Object', () => {
   let state
   let env
+  /** @type {RelaySession} */
   let relaySession
 
   // Store the original Response object
@@ -167,7 +172,7 @@ describe('RelaySession Durable Object', () => {
     })
 
     it('should reject non-WebSocket upgrade requests', async () => {
-      const request = new Request('https://test.com', { method: 'GET' })
+      const request = new Request('https://test.com', { method: HttpMethods.GET })
       const response = await relaySession.fetch(request)
       expect(response.status).toBe(StatusCodes.UPGRADE_REQUIRED)
       expect(await response.text()).toBe(labels.EXPECTED_WEBSOCKET)
@@ -216,7 +221,7 @@ describe('RelaySession Durable Object', () => {
           expect(response.status).toBe(StatusCodes.SWITCHING_PROTOCOLS)
           expect(response.webSocket).toBe(lastMockSocket.client)
           expect(state.acceptWebSocket).toHaveBeenCalledWith(expect.anything(), [
-            `${websocketTags.TYPE}:${deviceTags.PC}`,
+            labels.PC_TYPE,
             `${websocketTags.ID}:0`
           ])
           expect(lastMockSocket.server.send).toHaveBeenCalledWith(JSON.stringify({
@@ -247,7 +252,7 @@ describe('RelaySession Durable Object', () => {
         beforeEach(async () => {
           // A PC must be connected first
           const pcSocket = createMockWebSocket()
-          mockSockets.set(pcSocket, [`${websocketTags.TYPE}:${deviceTags.PC}`, `${websocketTags.ID}:0`])
+          mockSockets.set(pcSocket, [labels.PC_TYPE, `${websocketTags.ID}:0`])
           await state.storage.put(labels.TABLET_CONNECTION_TOKEN, MOCK_TABLET_TOKEN)
         })
 
@@ -279,7 +284,7 @@ describe('RelaySession Durable Object', () => {
 
           // Check WebSocket acceptance
           expect(state.acceptWebSocket).toHaveBeenCalledWith(expect.anything(), [
-            `${websocketTags.TYPE}:${deviceTags.TABLET}`,
+            labels.TABLET_TYPE,
             `${websocketTags.ID}:5`
           ])
 
@@ -292,7 +297,7 @@ describe('RelaySession Durable Object', () => {
           }))
 
           // Check notification to PC
-          const pcSocket = state.getWebSockets(`${websocketTags.TYPE}:${deviceTags.PC}`)[0]
+          const pcSocket = state.getWebSockets(labels.PC_TYPE)[0]
           expect(pcSocket.send).toHaveBeenCalledWith(expect.stringContaining(`"type":"${labels.TABLET_CONNECTED}"`))
           expect(pcSocket.send).toHaveBeenCalledWith(expect.stringContaining('"id":5'))
           expect(pcSocket.send).toHaveBeenCalledWith(expect.stringContaining('"newTabletToken":"new-mock-token"'))
@@ -313,8 +318,8 @@ describe('RelaySession Durable Object', () => {
     it('should iterate over all sockets when no tag is provided', () => {
       const socket1 = { id: 1 }
       const socket2 = { id: 2 }
-      mockSockets.set(socket1, ['type:pc'])
-      mockSockets.set(socket2, ['type:tablet'])
+      mockSockets.set(socket1, [labels.PC_TYPE])
+      mockSockets.set(socket2, [labels.TABLET_TYPE])
       const callback = vi.fn(socket => socket.id)
 
       const results = relaySession.iterateOverSockets(callback)
@@ -325,11 +330,11 @@ describe('RelaySession Durable Object', () => {
     it('should iterate over tagged sockets when a tag is provided', () => {
       const socket1 = { id: 1 }
       const socket2 = { id: 2 }
-      mockSockets.set(socket1, ['type:pc'])
-      mockSockets.set(socket2, ['type:tablet'])
+      mockSockets.set(socket1, [labels.PC_TYPE])
+      mockSockets.set(socket2, [labels.TABLET_TYPE])
       const callback = vi.fn(socket => socket.id)
 
-      const results = relaySession.iterateOverSockets(callback, 'type:pc')
+      const results = relaySession.iterateOverSockets(callback, labels.PC_TYPE)
       expect(callback).toHaveBeenCalledTimes(1)
       expect(callback).toHaveBeenCalledWith(socket1)
       expect(results).toEqual([1])
@@ -339,9 +344,10 @@ describe('RelaySession Durable Object', () => {
   describe('getClientInfo', () => {
     it('should extract type and ID from tags', () => {
       const ws = {}
-      state.getTags.mockReturnValue([`${websocketTags.TYPE}:${deviceTags.TABLET}`, `${websocketTags.ID}:123`])
+      const randomInt = getRandomInt()
+      state.getTags.mockReturnValue([labels.TABLET_TYPE, `${websocketTags.ID}:${randomInt}`])
       const info = relaySession.getClientInfo(ws)
-      expect(info).toEqual({ type: deviceTags.TABLET, id: 123 })
+      expect(info).toEqual({ type: deviceTags.TABLET, id: randomInt })
     })
 
     it('should return defaults for missing tags', () => {
@@ -356,15 +362,17 @@ describe('RelaySession Durable Object', () => {
     let pcSocket
     let tabletSocket1
     let tabletSocket2
+    let tabletSockets
 
     beforeEach(() => {
-      pcSocket = { send: vi.fn(), close: vi.fn(), id: 'pc' }
+      pcSocket = { send: vi.fn(), close: vi.fn(), id: deviceTags.PC }
       tabletSocket1 = { send: vi.fn(), close: vi.fn(), id: 'tablet1' }
       tabletSocket2 = { send: vi.fn(), close: vi.fn(), id: 'tablet2' }
+      tabletSockets = [tabletSocket1, tabletSocket2]
 
-      mockSockets.set(pcSocket, [`${websocketTags.TYPE}:${deviceTags.PC}`, `${websocketTags.ID}:0`])
-      mockSockets.set(tabletSocket1, [`${websocketTags.TYPE}:${deviceTags.TABLET}`, `${websocketTags.ID}:1`])
-      mockSockets.set(tabletSocket2, [`${websocketTags.TYPE}:${deviceTags.TABLET}`, `${websocketTags.ID}:2`])
+      mockSockets.set(pcSocket, [labels.PC_TYPE, `${websocketTags.ID}:0`])
+      mockSockets.set(tabletSocket1, [labels.TABLET_TYPE, `${websocketTags.ID}:1`])
+      mockSockets.set(tabletSocket2, [labels.TABLET_TYPE, `${websocketTags.ID}:2`])
     })
 
     it('should handle invalid JSON', async () => {
@@ -392,8 +400,9 @@ describe('RelaySession Durable Object', () => {
 
       const closeReason = `${labels.SESSION_CLOSED_BY_CLIENT_PREFIX} ${deviceTags.TABLET} (id: 1)`
       expect(pcSocket.close).toHaveBeenCalledWith(WsStatusCodes.NORMAL_CLOSURE, closeReason)
-      expect(tabletSocket1.close).toHaveBeenCalledWith(WsStatusCodes.NORMAL_CLOSURE, closeReason)
-      expect(tabletSocket2.close).toHaveBeenCalledWith(WsStatusCodes.NORMAL_CLOSURE, closeReason)
+      tabletSockets.forEach(tabletSocket => {
+        expect(tabletSocket.close).toHaveBeenCalledWith(WsStatusCodes.NORMAL_CLOSURE, closeReason)
+      })
     })
 
     it('should handle "get_participants" command', async () => {
@@ -443,8 +452,9 @@ describe('RelaySession Durable Object', () => {
       })
 
       await relaySession.webSocketMessage(pcSocket, message)
-      expect(tabletSocket1.send).not.toHaveBeenCalled()
-      expect(tabletSocket2.send).not.toHaveBeenCalled()
+      tabletSockets.forEach(tabletSocket => {
+        expect(tabletSocket.send).not.toHaveBeenCalled()
+      })
     })
 
     it('should relay a public message to all clients of a type', async () => {
@@ -461,10 +471,11 @@ describe('RelaySession Durable Object', () => {
         from: expect.objectContaining({ type: deviceTags.PC, id: 0 })
       }
 
-      const sentMessage1 = JSON.parse(tabletSocket1.send.mock.calls[0][0])
-      const sentMessage2 = JSON.parse(tabletSocket2.send.mock.calls[0][0])
-      expect(sentMessage1).toEqual(expectedMessage)
-      expect(sentMessage2).toEqual(expectedMessage)
+      tabletSockets.forEach(tabletSocket => {
+        const sentMessage = JSON.parse(tabletSocket.send.mock.calls[0][0])
+        expect(sentMessage).toEqual(expectedMessage)
+      })
+
       // Should not send back to sender
       expect(pcSocket.send).not.toHaveBeenCalled()
     })
@@ -506,49 +517,52 @@ describe('RelaySession Durable Object', () => {
     let pcSocket
     let tabletSocket1
     let tabletSocket2
+    let tabletSockets
 
     beforeEach(() => {
-      pcSocket = { send: vi.fn(), close: vi.fn(), id: 'pc' }
+      pcSocket = { send: vi.fn(), close: vi.fn(), id: deviceTags.PC }
       tabletSocket1 = { send: vi.fn(), close: vi.fn(), id: 'tablet1' }
       tabletSocket2 = { send: vi.fn(), close: vi.fn(), id: 'tablet2' }
+      tabletSockets = [tabletSocket1, tabletSocket2]
 
-      mockSockets.set(pcSocket, [`${websocketTags.TYPE}:${deviceTags.PC}`, `${websocketTags.ID}:0`])
-      mockSockets.set(tabletSocket1, [`${websocketTags.TYPE}:${deviceTags.TABLET}`, `${websocketTags.ID}:1`])
+      mockSockets.set(pcSocket, [labels.PC_TYPE, `${websocketTags.ID}:0`])
+      mockSockets.set(tabletSocket1, [labels.TABLET_TYPE, `${websocketTags.ID}:1`])
     })
 
     it('should do nothing if close was initiated by client command', async () => {
       const reason = `${labels.SESSION_CLOSED_BY_CLIENT_PREFIX} tablet (id: 1)`
-      await relaySession.webSocketClose(tabletSocket1, 1000, reason, true)
+      await relaySession.webSocketClose(tabletSocket1, WsStatusCodes.NORMAL_CLOSURE, reason, true)
       expect(pcSocket.close).not.toHaveBeenCalled()
     })
 
     it('should close all tablets if the PC disconnects', async () => {
-      mockSockets.set(tabletSocket2, [`${websocketTags.TYPE}:${deviceTags.TABLET}`, `${websocketTags.ID}:2`])
+      mockSockets.set(tabletSocket2, [labels.TABLET_TYPE, `${websocketTags.ID}:2`])
 
-      await relaySession.webSocketClose(pcSocket, 1001, 'PC disconnected', false)
+      await relaySession.webSocketClose(pcSocket, WsStatusCodes.GOING_AWAY, 'PC disconnected', false)
 
       const closeReason = `${deviceTags.PC} (id: 0) disconnected`
-      expect(tabletSocket1.close).toHaveBeenCalledWith(WsStatusCodes.NORMAL_CLOSURE, closeReason)
-      expect(tabletSocket2.close).toHaveBeenCalledWith(WsStatusCodes.NORMAL_CLOSURE, closeReason)
+      tabletSockets.forEach(tabletSocket => {
+        expect(tabletSocket.close).toHaveBeenCalledWith(WsStatusCodes.NORMAL_CLOSURE, closeReason)
+      })
     })
 
     it('should close a single tablet if the PC disconnects', async () => {
       // Only tabletSocket1 is connected in the beforeEach setup
 
-      await relaySession.webSocketClose(pcSocket, 1001, 'PC disconnected', false)
+      await relaySession.webSocketClose(pcSocket, WsStatusCodes.GOING_AWAY, 'PC disconnected', false)
 
       const closeReason = `${deviceTags.PC} (id: 0) disconnected`
       expect(tabletSocket1.close).toHaveBeenCalledWith(WsStatusCodes.NORMAL_CLOSURE, closeReason)
     })
 
     it('should not close PC if a tablet disconnects but others remain', async () => {
-      mockSockets.set(tabletSocket2, [`${websocketTags.TYPE}:${deviceTags.TABLET}`, `${websocketTags.ID}:2`])
+      mockSockets.set(tabletSocket2, [labels.TABLET_TYPE, `${websocketTags.ID}:2`])
 
       // Simulate the runtime behavior: when getWebSockets is called inside the handler,
       // the closing socket (tabletSocket1) is no longer present in the list.
       state.getWebSockets.mockReturnValue([tabletSocket2])
 
-      await relaySession.webSocketClose(tabletSocket1, 1001, 'Tablet 1 disconnected', false)
+      await relaySession.webSocketClose(tabletSocket1, WsStatusCodes.GOING_AWAY, 'Tablet 1 disconnected', false)
 
       expect(pcSocket.close).not.toHaveBeenCalled()
     })
@@ -568,16 +582,16 @@ describe('RelaySession Durable Object', () => {
         }
       })
 
-      await relaySession.webSocketClose(tabletSocket1, 1001, 'Tablet disconnected', false)
+      await relaySession.webSocketClose(tabletSocket1, WsStatusCodes.GOING_AWAY, 'Tablet disconnected', false)
 
       const closeReason = `${labels.LAST_TABLET_DISCONNECTED} (was id: 1)`
       expect(pcSocket.close).toHaveBeenCalledWith(WsStatusCodes.NORMAL_CLOSURE, closeReason)
     })
 
     it('should handle disconnection of an unknown client type gracefully', async () => {
-      const unknownSocket = { id: 'unknown' }
+      const unknownSocket = { id: 'something' }
       mockSockets.set(unknownSocket, [`${websocketTags.TYPE}:${deviceTags.UNKNOWN}`, `${websocketTags.ID}:-1`])
-      await expect(relaySession.webSocketClose(unknownSocket, 1001, 'Unknown disconnected', false)).resolves.not.toThrow()
+      await expect(relaySession.webSocketClose(unknownSocket, WsStatusCodes.GOING_AWAY, 'Something disconnected', false)).resolves.not.toThrow()
     })
   })
 
@@ -589,9 +603,10 @@ describe('RelaySession Durable Object', () => {
     })
 
     it('should retrieve the counter from storage if it exists', async () => {
-      state.storage.get.mockResolvedValue(42)
+      const randomTabletId = getRandomInt()
+      state.storage.get.mockResolvedValue(randomTabletId)
       await relaySession.getNextTabletId()
-      expect(relaySession.nextTabletId).toBe(42)
+      expect(relaySession.nextTabletId).toBe(randomTabletId)
     })
   })
 

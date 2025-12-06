@@ -1,9 +1,8 @@
 import { DurableObject } from 'cloudflare:workers'
+import HttpMethods from 'http-methods-constants'
+import { ReasonPhrases, StatusCodes } from 'http-status-codes'
+import WsStatusCodes from 'websocket-event-codes'
 
-import HttpMethods from '../node_modules/http-methods-constants/index'
-import { ReasonPhrases } from '../node_modules/http-status-codes/build/cjs/reason-phrases'
-import { StatusCodes } from '../node_modules/http-status-codes/build/cjs/status-codes'
-import WsStatusCodes from '../node_modules/websocket-event-codes/index'
 import searchParams from './constants/search-params.mjs'
 import slugs from './constants/slugs.mjs'
 import { deviceTags, labels, websocketTags } from './constants/tags.mjs'
