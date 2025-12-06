@@ -197,7 +197,7 @@ export class RelaySession extends DurableObject {
    * @returns {Array<T>} An array containing the return value of the callback for each socket.
    */
   iterateOverSockets (callback, tag = undefined) {
-    const sockets = this.ctx.getWebSockets(tag) || []
+    const sockets = this.ctx.getWebSockets(tag)
     return sockets.map(socket => callback(socket))
   }
 

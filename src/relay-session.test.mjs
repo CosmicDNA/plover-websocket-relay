@@ -485,6 +485,21 @@ describe('RelaySession Durable Object', () => {
       // There are 2 tablets, so we expect two `true` values.
       expect(iterateSpy.mock.results[0].value).toEqual([true, true])
     })
+
+    it('should not send the message back to the sender', async () => {
+      const payload = { data: 'public hello' }
+      const message = JSON.stringify({
+        to: { type: deviceTags.TABLET },
+        payload
+      })
+
+      // Spy on the method to check its return value
+      const iterateSpy = vi.spyOn(relaySession, 'iterateOverSockets')
+      await relaySession.webSocketMessage(tabletSocket1, message)
+
+      // The spy is called. For the sender (tablet1), it returns `undefined`. For the other tablet (tablet2), it returns `true`.
+      expect(iterateSpy.mock.results[0].value).toEqual([undefined, true])
+    })
   })
 
   describe('webSocketClose', () => {
