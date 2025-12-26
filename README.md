@@ -71,7 +71,7 @@ In the tablet's terminal, send a message to all clients of type pc. The PC clien
 # In the tablet's wscat session:
 {"to":{"type":"pc"},"payload":{"stroke":"KAT"}}
 ```
-The PC terminal will receive: `{"stroke":"KAT","from":{"id":1,"type":"tablet"}}`
+The PC terminal will receive: `{'payload': {'stroke': 'KAT'}, 'from': {'id': 0, 'type': 'tablet'}}`
 
 2. Send a Private Message from PC to Tablet:
 In the PC's terminal, send a private message specifically to the tablet with ID 1.
@@ -80,7 +80,7 @@ In the PC's terminal, send a private message specifically to the tablet with ID 
 # In the PC's wscat session:
 {"to":{"type":"tablet","id":1},"payload":{"message":"Hello from PC!"}}
 ```
-The tablet terminal will receive: `{"message":"Hello from PC!","from":{"id":0,"type":"pc"}}`
+The tablet terminal will receive: `{'payload': {'message':'Hello from PC!'},'from':{'id':0,'type':'pc'}}`
 
 3. Get a List of Participants:
 From any client, send a get_participants command.

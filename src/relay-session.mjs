@@ -71,7 +71,6 @@ export class RelaySession extends DurableObject {
     let clientId
 
     let client, server
-
     try {
       // Ensure the client ID counter is initialized before use.
       await this.getNextTabletId()
@@ -88,7 +87,10 @@ export class RelaySession extends DurableObject {
         return new Response(labels.EXPECTED_WEBSOCKET, { status: StatusCodes.UPGRADE_REQUIRED })
       }
 
-      [client, server] = Object.values(new globalThis.WebSocketPair())
+      const publicKey = request.headers.get('X-Public-Key')
+      console.debug(`[DO ${this.ctx.id}] Client public key: ${publicKey}`)
+
+      ;[client, server] = Object.values(new globalThis.WebSocketPair())
 
       // Get client type from URL path
       const url = new URL(request.url)
@@ -130,6 +132,7 @@ export class RelaySession extends DurableObject {
             id: clientId, // Let the PC know the ID of the new tablet
             type: labels.TABLET_CONNECTED,
             newTabletToken,
+            publicKey,
             timestamp: Date.now()
           }))
         }, labels.PC_TYPE)
@@ -159,6 +162,7 @@ export class RelaySession extends DurableObject {
         clientType,
         id: clientId,
         type: labels.SYSTEM,
+        publicKey,
         message: labels.CONNECTION_ESTABLISHED
       }
       server.send(JSON.stringify(welcomeMessage))
@@ -176,6 +180,7 @@ export class RelaySession extends DurableObject {
         server?.close(WsStatusCodes.POLICY_VIOLATION, e.message)
         return new Response(e.message, { status: StatusCodes.FORBIDDEN })
       } else {
+        console.error(`[DO ${this.ctx.id}] Uncaught exception:`, e)
         return new Response(ReasonPhrases.INTERNAL_SERVER_ERROR, { status: StatusCodes.INTERNAL_SERVER_ERROR })
       }
     }
@@ -286,7 +291,7 @@ export class RelaySession extends DurableObject {
       }
 
       // Add sender information to the payload
-      const messageToSend = JSON.stringify({ ...payload, from: sender })
+      const messageToSend = JSON.stringify({ payload, from: sender })
 
       // Private message: 'to.id' is specified
       if (recipient.id !== undefined) {

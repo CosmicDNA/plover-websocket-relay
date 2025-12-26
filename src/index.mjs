@@ -3,7 +3,6 @@ import { logger } from 'hono/logger'
 import { getMimeType } from 'hono/utils/mime'
 
 import HttpMethods from '../node_modules/http-methods-constants/index'
-import protocols from './constants/protocols.mjs'
 import slugs from './constants/slugs.mjs'
 import { RelaySession } from './relay-session.mjs'
 import getNewToken from './token-generator.mjs'
@@ -32,11 +31,9 @@ app.post(`/${slugs.SESSION}/${slugs.INITIATE}`, async (c) => {
   await sessionStub.fetch(initRequest)
 
   const workerUrl = new URL(c.req.url)
-  // Use 'ws' for localhost (local dev) and 'wss' for all other environments.
-  const protocol = workerUrl.hostname === 'localhost' ? protocols.WS : protocols.WSS
 
   return c.json({
-    protocol,
+    protocol: workerUrl.protocol.replace('http', 'ws'),
     sessionId,
     tabletConnectionToken,
     pcConnectionToken
