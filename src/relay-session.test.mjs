@@ -228,7 +228,6 @@ describe('RelaySession Durable Object', () => {
             clientType: deviceTags.PC,
             id: 0,
             type: labels.SYSTEM,
-            publicKey: null,
             message: labels.CONNECTION_ESTABLISHED
           }))
         })
@@ -294,7 +293,6 @@ describe('RelaySession Durable Object', () => {
             clientType: deviceTags.TABLET,
             id: 5,
             type: labels.SYSTEM,
-            publicKey: null,
             message: labels.CONNECTION_ESTABLISHED
           }))
 
