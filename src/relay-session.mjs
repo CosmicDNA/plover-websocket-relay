@@ -200,10 +200,8 @@ export class RelaySession extends DurableObject {
     } catch (e) {
       // Ensure the server-side socket is closed on error if it was created.
       if (e instanceof SingletonViolation) {
-        server?.close(WsStatusCodes.POLICY_VIOLATION, e.message)
         return new Response(e.message, { status: StatusCodes.CONFLICT })
       } else if (e instanceof TokenError) {
-        server?.close(WsStatusCodes.POLICY_VIOLATION, e.message)
         return new Response(e.message, { status: StatusCodes.FORBIDDEN })
       } else {
         console.error(`[DO ${this.ctx.shortId}] Uncaught exception:`, e)

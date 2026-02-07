@@ -1,7 +1,10 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
   "routes": [
-    "https://relay.stenography.cosmicdna.co.uk/*"
+    {
+      "pattern": "relay.stenography.cosmicdna.co.uk",
+      "custom_domain": true
+    }
 	],
 	"name": "plover-websocket-relay",
 	"main": "src/index.mjs",
