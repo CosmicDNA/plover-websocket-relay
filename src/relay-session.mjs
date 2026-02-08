@@ -32,6 +32,7 @@ const getWebSocketPair = () => {
 export class RelaySession extends DurableObject {
   /** @type {DurableObjectState<Env>} */
   ctx
+  newTabletToken
 
   /**
    * Creates an instance of the RelaySession Durable Object.
@@ -150,14 +151,14 @@ export class RelaySession extends DurableObject {
         clientId = this.nextTabletId++
         await this.ctx.storage.put(labels.TABLET_ID_COUNTER, this.nextTabletId)
 
-        const newTabletToken = getNewToken()
-        await this.ctx.storage.put(labels.TABLET_CONNECTION_TOKEN, newTabletToken)
+        this.newTabletToken = getNewToken()
+        await this.ctx.storage.put(labels.TABLET_CONNECTION_TOKEN, this.newTabletToken)
         this.iterateOverSockets(pcSocket => {
           pcSocket.send(JSON.stringify({
             clientType,
             id: clientId, // Let the PC know the ID of the new tablet
             type: labels.TABLET_CONNECTED,
-            newTabletToken,
+            newTabletToken: this.newTabletToken,
             publicKey,
             timestamp: Date.now()
           }))
@@ -189,7 +190,8 @@ export class RelaySession extends DurableObject {
         id: clientId,
         type: labels.SYSTEM,
         // publicKey,
-        message: labels.CONNECTION_ESTABLISHED
+        message: labels.CONNECTION_ESTABLISHED,
+        newTabletToken: this.newTabletToken
       }
       server.send(JSON.stringify(welcomeMessage))
 
