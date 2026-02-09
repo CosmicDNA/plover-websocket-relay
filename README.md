@@ -105,4 +105,9 @@ The client that sent the request will receive a list of all connected clients. F
 
 Both WebSocket connections should close immediately.
 
-If all steps pass, your relay core is functioning perfectly.
+
+## Powered by
+
+![NodeJS](https://img.shields.io/badge/NodeJS-repo?logo=javascript&color=black&style=for-the-badge)
+![Cloudflare](https://img.shields.io/badge/cloudflare-repo?logo=cloudflare&color=black&style=for-the-badge)
+![Hono](https://img.shields.io/badge/hono-repo?logo=hono&color=black&style=for-the-badge)
