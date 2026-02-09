@@ -30,7 +30,7 @@ Use a WebSocket client like wscat to connect as the PC.
 
 ```bash
 # Construct the PC connection URL from the sessionId in the previous response
-wscat -c "`jq -r .protocol session.json`://${BASE_WORKER_URL}/session/`jq -r .sessionId session.json`/connect?token=`jq -r .pcConnectionToken session.json`"
+wscat -c "`jq -r .protocol session.json`//${BASE_WORKER_URL}/session/`jq -r .sessionId session.json`/connect?token=`jq -r .pcConnectionToken session.json`"
 ```
 
 You should see a successful connection. The Worker logs will show PC connected to session.
@@ -42,7 +42,7 @@ Upon connecting, the PC client will receive a welcome message with its unique se
 In a second terminal, use the exact tabletConnectionUrl from Step 1.
 
 ```bash
-wscat -c "`jq -r .protocol session.json`://${BASE_WORKER_URL}/session/`jq -r .sessionId session.json`/join?token=`jq -r .tabletConnectionToken session.json`"
+wscat -c "`jq -r .protocol session.json`//${BASE_WORKER_URL}/session/`jq -r .sessionId session.json`/join?token=`jq -r .tabletConnectionToken session.json`"
 ```
 Expected Results:
 

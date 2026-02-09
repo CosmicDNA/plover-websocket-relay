@@ -164,6 +164,7 @@ dist
 !.dev.vars.example
 .env*
 !.envrc
+!.envrc.local
 .wrangler/
 
 session.json

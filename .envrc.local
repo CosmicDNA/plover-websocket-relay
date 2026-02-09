@@ -1,0 +1,4 @@
+#!/bin/sh
+
+export BASE_WORKER_URL=`jq -r ".dev.ip" wrangler.jsonc`:`jq -r ".dev.port" wrangler.jsonc`
+export WORKER_URL=http://$BASE_WORKER_URL

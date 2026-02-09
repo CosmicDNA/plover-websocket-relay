@@ -198,7 +198,7 @@ describe('RelaySession Durable Object', () => {
           const response = await relaySession.fetch(request)
           expect(response.status).toBe(StatusCodes.FORBIDDEN)
           expect(await response.text()).toBe(labels.INVALID_TOKEN)
-          expect(lastMockSocket.server.close).toHaveBeenCalledWith(WsStatusCodes.POLICY_VIOLATION, labels.INVALID_TOKEN)
+          expect(lastMockSocket.server.close).not.toHaveBeenCalled()
         })
 
         it('should reject if a PC is already connected', async () => {
@@ -210,7 +210,7 @@ describe('RelaySession Durable Object', () => {
 
           expect(response.status).toBe(StatusCodes.CONFLICT)
           expect(await response.text()).toContain('already connected')
-          expect(lastMockSocket.server.close).toHaveBeenCalledWith(WsStatusCodes.POLICY_VIOLATION, expect.stringContaining('already connected'))
+          expect(lastMockSocket.server.close).not.toHaveBeenCalled()
         })
 
         it('should successfully connect a PC', async () => {
@@ -244,7 +244,7 @@ describe('RelaySession Durable Object', () => {
           await relaySession.fetch(request)
 
           expect(enforceSingletonSpy).toHaveBeenCalledTimes(1)
-          expect(lastMockSocket.server.close).toHaveBeenCalledWith(WsStatusCodes.POLICY_VIOLATION, expect.stringContaining('already connected'))
+          expect(lastMockSocket.server.close).not.toHaveBeenCalled()
         })
       })
 
@@ -261,7 +261,7 @@ describe('RelaySession Durable Object', () => {
           const response = await relaySession.fetch(request)
           expect(response.status).toBe(StatusCodes.FORBIDDEN)
           expect(await response.text()).toBe(labels.INVALID_TOKEN)
-          expect(lastMockSocket.server.close).toHaveBeenCalledWith(WsStatusCodes.POLICY_VIOLATION, labels.INVALID_TOKEN)
+          expect(lastMockSocket.server.close).not.toHaveBeenCalled()
         })
 
         it('should successfully connect a tablet', async () => {
@@ -293,7 +293,8 @@ describe('RelaySession Durable Object', () => {
             clientType: deviceTags.TABLET,
             id: 5,
             type: labels.SYSTEM,
-            message: labels.CONNECTION_ESTABLISHED
+            message: labels.CONNECTION_ESTABLISHED,
+            newTabletToken: 'new-mock-token'
           }))
 
           // Check notification to PC

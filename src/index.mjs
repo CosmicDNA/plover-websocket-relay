@@ -1,8 +1,8 @@
 import { Hono } from 'hono'
 import { logger } from 'hono/logger'
 import { getMimeType } from 'hono/utils/mime'
+import HttpMethods from 'http-methods-constants'
 
-import HttpMethods from '../node_modules/http-methods-constants/index'
 import slugs from './constants/slugs.mjs'
 import { RelaySession } from './relay-session.mjs'
 import getNewToken from './token-generator.mjs'
