@@ -30,10 +30,15 @@ const getWebSocketPair = () => {
  */
 
 export class RelaySession extends DurableObject {
+  sessionAlarmTime = 5 * 60 * 1000
+  keepAliveInterval = 30 * 1000
+
   /** @type {DurableObjectState<Env>} */
   ctx
   newTabletToken
 
+  /** @type {string} */
+  shortId
   /**
    * Creates an instance of the RelaySession Durable Object.
    * @param {DurableObjectState<Env>} ctx
@@ -42,10 +47,8 @@ export class RelaySession extends DurableObject {
   constructor (ctx, env) {
     super(ctx, env)
     this.ctx = ctx
-    this.ctx.shortId = String(ctx.id).slice(-5)
-    this.sessionAlarmTime = 5 * 60 * 1000
-    this.keepAliveInterval = 30 * 1000
-    console.debug(`[DO ${this.ctx.shortId}] Constructor called`)
+    this.shortId = String(ctx.id).slice(-5)
+    console.debug(`[DO ${this.shortId}] Constructor called`)
   }
 
   /**
@@ -57,9 +60,9 @@ export class RelaySession extends DurableObject {
   async initialize (tabletConnectionToken, pcConnectionToken) {
     await this.ctx.storage.put(labels.TABLET_CONNECTION_TOKEN, tabletConnectionToken)
     await this.ctx.storage.put(labels.PC_CONNECTION_TOKEN, pcConnectionToken)
-    console.debug(`[DO ${this.ctx.shortId}] initialize() called, tokens stored`)
+    console.debug(`[DO ${this.shortId}] initialize() called, tokens stored`)
     await this.ctx.storage.setAlarm(Date.now() + this.sessionAlarmTime)
-    console.debug(`[DO ${this.ctx.shortId}] Session expiry alarm set`)
+    console.debug(`[DO ${this.shortId}] Session expiry alarm set`)
   }
 
   /**
@@ -71,7 +74,7 @@ export class RelaySession extends DurableObject {
     // Enforce singleton PC connection
     if (this.ctx.getWebSockets(`type:${deviceType}`).length > 0) {
       const message = `A ${deviceType} is already connected to this session.`
-      console.warn(`[DO ${this.ctx.shortId}] Rejected second ${deviceType} connection.`)
+      console.warn(`[DO ${this.shortId}] Rejected second ${deviceType} connection.`)
       throw new SingletonViolation(message)
     }
   }
@@ -121,7 +124,7 @@ export class RelaySession extends DurableObject {
       if (!publicKey) {
         publicKey = searchParams.get('publicKey')
       }
-      console.debug(`[DO ${this.ctx.shortId}] Client public key: ${publicKey}`)
+      console.debug(`[DO ${this.shortId}] Client public key: ${publicKey}`)
 
       const connect = async () => {
         clientType = deviceTags.PC
@@ -178,12 +181,12 @@ export class RelaySession extends DurableObject {
           break
       }
 
-      console.debug(`[DO ${this.ctx.shortId}] Accepted WebSocket with tag: [${clientType}] (id: ${clientId})`)
+      console.debug(`[DO ${this.shortId}] Accepted WebSocket with tag: [${clientType}] (id: ${clientId})`)
       const tags = [`${websocketTags.TYPE}:${clientType}`, `${websocketTags.ID}:${clientId}`]
       this.ctx.acceptWebSocket(server, tags)
 
       const taggedSockets = this.ctx.getWebSockets(`${websocketTags.TYPE}:${clientType}`)
-      console.debug(`[DO ${this.ctx.shortId}] Now has ${taggedSockets.length} ${clientType} socket(s)`)
+      console.debug(`[DO ${this.shortId}] Now has ${taggedSockets.length} ${clientType} socket(s)`)
 
       const welcomeMessage = {
         clientType,
@@ -206,7 +209,7 @@ export class RelaySession extends DurableObject {
       } else if (e instanceof TokenError) {
         return new Response(e.message, { status: StatusCodes.FORBIDDEN })
       } else {
-        console.error(`[DO ${this.ctx.shortId}] Uncaught exception:`, e)
+        console.error(`[DO ${this.shortId}] Uncaught exception:`, e)
         return new Response(ReasonPhrases.INTERNAL_SERVER_ERROR, { status: StatusCodes.INTERNAL_SERVER_ERROR })
       }
     }
@@ -261,26 +264,23 @@ export class RelaySession extends DurableObject {
     // Determine clientType by checking which tag this WebSocket has
     const sender = this.getClientInfo(ws)
 
-    console.debug(`[DO ${this.ctx.shortId}] Message from ${sender.type} (id: ${sender.id}): ${message}`)
-
     try {
-      // Parse JSON message
       const data = JSON.parse(message)
-      console.debug(`[DO ${this.ctx.shortId}] JSON from ${sender.type} (id: ${sender.id}):`, data)
+      console.debug(`[DO ${this.shortId}] Message from ${sender.type} (id: ${sender.id}):`, data)
 
       // Handle keep-alive pings
       if (data.type === 'ping') {
-        console.debug(`[DO ${this.ctx.shortId}] Received ping from ${sender.type} (id: ${sender.id}).`)
+        console.debug(`[DO ${this.shortId}] Received ping from ${sender.type} (id: ${sender.id}).`)
         // Respond with a pong to let the client know the connection is active.
         ws.send(JSON.stringify({ type: 'pong' }))
-        console.debug(`[DO ${this.ctx.shortId}] Sent pong to ${sender.type} (id: ${sender.id}).`)
+        console.debug(`[DO ${this.shortId}] Sent pong to ${sender.type} (id: ${sender.id}).`)
         return
       }
 
       // New message routing logic
       const payload = data?.payload
       const close = () => {
-        console.debug(`[DO ${this.ctx.shortId}] ${sender.type} (id: ${sender.id}) requested closure. Closing all connections.`)
+        console.debug(`[DO ${this.shortId}] ${sender.type} (id: ${sender.id}) requested closure. Closing all connections.`)
         // Get all sockets currently in the session and close them to terminate the session.
         const closeReason = `${labels.SESSION_CLOSED_BY_CLIENT_PREFIX} ${sender.type} (id: ${sender.id})`
         this.iterateOverSockets((socket) => {
@@ -295,7 +295,7 @@ export class RelaySession extends DurableObject {
           type: labels.PARTICIPANTS_LIST,
           participants
         }))
-        console.debug(`[DO ${this.ctx.shortId}] Sent participants list to ${sender.type} (id: ${sender.id})`)
+        console.debug(`[DO ${this.shortId}] Sent participants list to ${sender.type} (id: ${sender.id})`)
       }
 
       // Handle special commands within the payload
@@ -312,7 +312,7 @@ export class RelaySession extends DurableObject {
       // Relay messages require a 'to' recipient and a 'payload'.
       const recipient = data?.to
       if (!recipient || !payload) {
-        console.warn(`[DO ${this.ctx.shortId}] Invalid message format from ${sender.type} (id: ${sender.id}). Not a command and is missing 'to' or 'payload'.`)
+        console.warn(`[DO ${this.shortId}] Invalid message format from ${sender.type} (id: ${sender.id}). Not a command and is missing 'to' or 'payload'.`)
         return
       }
 
@@ -332,10 +332,10 @@ export class RelaySession extends DurableObject {
         if (addressee) {
           const { socket, info } = addressee
           socket.send(messageToSend)
-          console.debug(`[DO ${this.ctx.shortId}] Relayed private message from ${sender.type} (id: ${sender.id}) to ${info.type} (id: ${info.id})`)
+          console.debug(`[DO ${this.shortId}] Relayed private message from ${sender.type} (id: ${sender.id}) to ${info.type} (id: ${info.id})`)
           return // Message sent, we are done
         }
-        console.warn(`[DO ${this.ctx.shortId}] Could not find recipient: ${recipient.type} (id: ${recipient.id})`)
+        console.warn(`[DO ${this.shortId}] Could not find recipient: ${recipient.type} (id: ${recipient.id})`)
       } else { // Public message to a client type
         const sentSockets = this.iterateOverSockets(socket => {
           // Don't send the message back to the sender
@@ -345,10 +345,10 @@ export class RelaySession extends DurableObject {
           }
         }, `${websocketTags.TYPE}:${recipient.type}`)
         const sentCount = sentSockets.filter(Boolean).length
-        console.debug(`[DO ${this.ctx.shortId}] Relayed public message from ${sender.type} (id: ${sender.id}) to ${sentCount} ${recipient.type}(s)`)
+        console.debug(`[DO ${this.shortId}] Relayed public message from ${sender.type} (id: ${sender.id}) to ${sentCount} ${recipient.type}(s)`)
       }
     } catch (e) {
-      console.error(`[DO ${this.ctx.shortId}] Invalid JSON from ${sender.type} (id: ${sender.id}):`, message)
+      console.error(`[DO ${this.shortId}] Invalid JSON from ${sender.type} (id: ${sender.id}):`, message)
     }
   }
 
@@ -363,7 +363,7 @@ export class RelaySession extends DurableObject {
   async webSocketClose (ws, code, reason, wasClean) {
     // Method 1: Check all active WebSocket tags to identify this one
     const clientInfo = this.getClientInfo(ws)
-    console.debug(`[DO ${this.ctx.shortId}] ${clientInfo.type} (id: ${clientInfo.id}) disconnected: ${reason} (code: ${code})`)
+    console.debug(`[DO ${this.shortId}] ${clientInfo.type} (id: ${clientInfo.id}) disconnected: ${reason} (code: ${code})`)
 
     // If a graceful shutdown was initiated by a tablet, do nothing further.
     if (!reason.startsWith(labels.SESSION_CLOSED_BY_CLIENT_PREFIX)) {
@@ -371,7 +371,7 @@ export class RelaySession extends DurableObject {
         case deviceTags.PC:
           // PC disconnected unexpectedly, close all tablet sockets.
           this.iterateOverSockets((socket) => {
-            console.debug(`[DO ${this.ctx.shortId}] Also closing tablet because ${clientInfo.type} (id: ${clientInfo.id}) disconnected`)
+            console.debug(`[DO ${this.shortId}] Also closing tablet because ${clientInfo.type} (id: ${clientInfo.id}) disconnected`)
             socket.close(WsStatusCodes.NORMAL_CLOSURE, `${clientInfo.type} (id: ${clientInfo.id}) disconnected`)
           }, labels.TABLET_TYPE)
           break
@@ -379,7 +379,7 @@ export class RelaySession extends DurableObject {
           // A tablet disconnected. If it was the last one, close the PC socket.
           if (this.ctx.getWebSockets(labels.TABLET_TYPE).length === 0) {
             const reason = `${labels.LAST_TABLET_DISCONNECTED} (was id: ${clientInfo.id})`
-            console.debug(`[DO ${this.ctx.shortId}] ${reason}`)
+            console.debug(`[DO ${this.shortId}] ${reason}`)
             this.iterateOverSockets(pcSocket => {
               pcSocket.close(WsStatusCodes.NORMAL_CLOSURE, reason)
             }, labels.PC_TYPE)
@@ -390,7 +390,7 @@ export class RelaySession extends DurableObject {
 
     // Debug: Log current socket counts
     const allSockets = this.ctx.getWebSockets()
-    console.debug(`[DO ${this.ctx.shortId}] Remaining sockets: ${allSockets.length} total`)
+    console.debug(`[DO ${this.shortId}] Remaining sockets: ${allSockets.length} total`)
   }
 
   /**
@@ -401,19 +401,23 @@ export class RelaySession extends DurableObject {
   }
 
   async alarm () {
-    console.debug(`[DO ${this.ctx.shortId}] Alarm triggered`)
+    console.debug(`[DO ${this.shortId}] Alarm triggered`)
 
-    // Check if we have active WebSockets
-    const allSockets = this.ctx.getWebSockets()
+    try {
+      // Check if we have active WebSockets
+      const allSockets = this.ctx.getWebSockets()
 
-    if (allSockets.length > 0) {
-      // We have active connections - set next keep-alive
-      console.debug(`[DO ${this.ctx.shortId}] Keep-alive: ${allSockets.length} active connections`)
-      await this.ctx.storage.setAlarm(Date.now() + this.keepAliveInterval)
-    } else {
-      // No active connections - session expired
-      console.debug(`[DO ${this.ctx.shortId}] Session expired - cleaning up`)
-      await this.ctx.storage.delete(labels.TABLET_CONNECTION_TOKEN)
+      if (allSockets.length > 0) {
+        // We have active connections - set next keep-alive
+        console.debug(`[DO ${this.shortId}] Keep-alive: ${allSockets.length} active connections`)
+        await this.ctx.storage.setAlarm(Date.now() + this.keepAliveInterval)
+      } else {
+        // No active connections - session expired
+        console.debug(`[DO ${this.shortId}] Session expired - cleaning up`)
+        await this.ctx.storage.delete(labels.TABLET_CONNECTION_TOKEN)
+      }
+    } catch (e) {
+      console.error(`[DO ${this.shortId}] Error in alarm handler:`, e)
     }
   }
 }
